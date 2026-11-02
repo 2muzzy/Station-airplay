@@ -25,7 +25,10 @@ AirPlay 2 для Яндекс Станций под управлением [Luna
 
 В меню AirPlay iPhone каждая станция появляется под своим именем и комнатой:
 
-![Меню AirPlay: Станция 2, Мини 2 и две Лайт 2](docs/assets/airplay-picker.jpg)
+<p align="center">
+  <img src="docs/assets/airplay-picker.jpg" width="360"
+       alt="Меню AirPlay: Станция 2, Мини 2 и две Лайт 2">
+</p>
 
 ## Поддерживаемые модели
 
