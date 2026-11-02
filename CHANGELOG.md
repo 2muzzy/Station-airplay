@@ -1,3 +1,14 @@
+## 2.0.2
+
+- The install hook no longer waits for Luna while YAM holds the transaction
+  lock. It schedules the enable in the background and returns immediately, so
+  `yam install airplay/airplay-luna` cannot hit YAM's 60-second postinstall
+  timeout and roll back on a busy station.
+- Registry artifacts also carry the YAM platform ids for the aliased boards
+  (`yandexplum`, `yandexmidi`), so a Lite 2 or Midi can resolve the package
+  from the registry directly. Station 3 keeps the canonical `orion` target.
+- Verified on the live fleet: Station 2, Mini 2 and two Lite 2 speakers.
+
 ## 2.0.1
 
 - Controls are on by default: `ducking` joins `voice`, `native_volume` and

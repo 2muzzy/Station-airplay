@@ -93,7 +93,7 @@ netstat -ltn | grep -E ':(5000|7000)'
 Скачанный `.yampkg` для своей модели ставится так же:
 
 ```sh
-yam install ./station-airplay-2.0.1-yandexstation_2.yampkg
+yam install ./station-airplay-2.0.2-yandexstation_2.yampkg
 ```
 
 Артефакты для конкретных плат лежат в разделе Releases и в реестре
