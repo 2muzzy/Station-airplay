@@ -1,3 +1,19 @@
+## 2.0.0
+
+First release of the standalone fork.
+
+- Install as `airplay/airplay-luna` from the YAM v2 registry. Luna is pulled in
+  as a dependency and a package hook enables the plugin, so a fresh station is
+  one command with no manual step in the web UI.
+- Voice control is enabled by default on every profile, including Mini and
+  Midi. Registry launchers now pass `--controls-config` where the source
+  package was audio-only.
+- Station volume is owned by Luna through `/api/volume`, with a direct ALSA
+  write when Luna's volume manager is not listening.
+- Native D-Bus client: the private bus is tried first, then the system bus, so
+  `dbus-send` is no longer required (Mini, Station 3, Midi).
+- README rewritten for the fork; upstream pull requests retired.
+
 ## 1.4.13
 
 - Handle receiver-confirmed AirPlay 2 attachment before audio starts: inherit
