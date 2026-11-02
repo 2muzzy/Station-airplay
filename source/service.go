@@ -29,7 +29,7 @@ import (
 )
 
 const (
-	version      = "Station airplay 2.0.0"
+	version      = "Station airplay 2.0.1"
 	audioFIFO    = "/tmp/sps.fifo"
 	metadataFIFO = "/tmp/shairport-sync-ap2-metadata"
 	brightness   = 170
@@ -39,6 +39,10 @@ type yamAPI struct {
 	base, token string
 	tokenHeader string
 	client      *http.Client
+	// Luna rebuilds the plugin index while a service starts; /api/plugins can
+	// take seconds on emulated hardware. Startup probes use a patient client so
+	// they do not fail while that lock is held.
+	slowClient *http.Client
 }
 type yamDevice struct {
 	Model        string   `json:"model"`
@@ -61,14 +65,26 @@ func newYAMAPI() (*yamAPI, error) {
 	// either runtime token header to a different endpoint.
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
-	client := &http.Client{
-		Timeout:   1200 * time.Millisecond,
-		Transport: transport,
-		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
+	checkRedirect := func(_ *http.Request, _ []*http.Request) error {
+		return http.ErrUseLastResponse
 	}
-	return &yamAPI{base: strings.TrimRight(credentials.url, "/"), token: credentials.token, tokenHeader: credentials.header, client: client}, nil
+	client := &http.Client{
+		Timeout:       1200 * time.Millisecond,
+		Transport:     transport,
+		CheckRedirect: checkRedirect,
+	}
+	slowClient := &http.Client{
+		Timeout:       30 * time.Second,
+		Transport:     transport,
+		CheckRedirect: checkRedirect,
+	}
+	return &yamAPI{
+		base:        strings.TrimRight(credentials.url, "/"),
+		token:       credentials.token,
+		tokenHeader: credentials.header,
+		client:      client,
+		slowClient:  slowClient,
+	}, nil
 }
 
 // ownAddress: BetterYAM binds only the LAN address and passes it as
@@ -109,7 +125,11 @@ func (a *yamAPI) requestContext(ctx context.Context, method, path string, payloa
 	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	res, e := a.client.Do(req)
+	client := a.client
+	if path == "/device" || path == "/media" {
+		client = a.slowClient
+	}
+	res, e := client.Do(req)
 	if e != nil {
 		return e
 	}

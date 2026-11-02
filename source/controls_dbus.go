@@ -352,7 +352,7 @@ func controlsVolume(ctx context.Context, api *yamAPI, d yamDevice, cfg controlsC
 		return nil, errors.New("unknown volume backend")
 	}
 }
-func controlsPreflight(ctx context.Context, api *yamAPI, d yamDevice, cfg controlsConfig) error {
+func controlsPreflight(ctx context.Context, api *yamAPI, d yamDevice, cfg *controlsConfig) error {
 	var caps struct {
 		Version  int  `json:"version"`
 		Speech   bool `json:"speech"`
@@ -368,27 +368,30 @@ func controlsPreflight(ctx context.Context, api *yamAPI, d yamDevice, cfg contro
 		}
 	}
 	if cfg.NativePlayer {
+		// Stock firmware ships the Quasar CLI, emulators usually do not. A
+		// missing optional handover must not take the whole receiver down.
 		if !cfg.Voice {
-			return errors.New("native_player requires voice")
-		}
-		st, err := os.Stat(quasarCLIPath)
-		if err != nil || st.Mode()&0o111 == 0 {
-			return errors.New("stock Quasar CLI is required for native player handover")
+			cfg.NativePlayer = false
+			fmt.Println("shared controls: native player disabled: voice is off")
+		} else if st, err := os.Stat(quasarCLIPath); err != nil || st.Mode()&0o111 == 0 {
+			cfg.NativePlayer = false
+			fmt.Println("shared controls: native player disabled: stock Quasar CLI not found")
 		}
 	}
 	if cfg.AliceButton {
 		if !cfg.NativePlayer {
-			return errors.New("alice_button requires native_player")
-		}
-		if !aliceButtonModels[d.Model] {
-			return fmt.Errorf("alice_button is not qualified for model %q", d.Model)
-		}
-		if _, err := findAliceButtonEvent("/dev/input"); err != nil {
-			return fmt.Errorf("Alice button keypad not found: %w", err)
+			cfg.AliceButton = false
+			fmt.Println("shared controls: Alice button disabled: native player is off")
+		} else if !aliceButtonModels[d.Model] {
+			cfg.AliceButton = false
+			fmt.Printf("shared controls: Alice button disabled: not qualified for model %q\n", d.Model)
+		} else if _, err := findAliceButtonEvent("/dev/input"); err != nil {
+			cfg.AliceButton = false
+			fmt.Println("shared controls: Alice button disabled: keypad not found")
 		}
 	}
 	if cfg.NativeVolume {
-		v, err := controlsVolume(ctx, api, d, cfg)
+		v, err := controlsVolume(ctx, api, d, *cfg)
 		if err != nil {
 			return err
 		}

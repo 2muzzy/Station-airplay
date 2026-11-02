@@ -93,7 +93,7 @@ netstat -ltn | grep -E ':(5000|7000)'
 Скачанный `.yampkg` для своей модели ставится так же:
 
 ```sh
-yam install ./station-airplay-2.0.0-yandexstation_2.yampkg
+yam install ./station-airplay-2.0.1-yandexstation_2.yampkg
 ```
 
 Артефакты для конкретных плат лежат в разделе Releases и в реестре
@@ -105,8 +105,11 @@ yam install ./station-airplay-2.0.0-yandexstation_2.yampkg
 После первого запуска Luna создаёт файл:
 
 ```text
-/data/luna/plugins/plugin-state/airplay.airplay-luna/airplay-controls.json
+$LUNA_PLUGIN_STATE/airplay-controls.json
 ```
+
+На живой прошивке это обычно
+`/data/yam/var/luna/data/plugins/plugin-state/airplay.airplay-luna/`.
 
 Значения по умолчанию:
 
@@ -114,11 +117,11 @@ yam install ./station-airplay-2.0.0-yandexstation_2.yampkg
 {
   "voice": true,
   "native_volume": true,
-  "ducking": false,
+  "ducking": true,
   "leds": true,
   "led_level": 200,
-  "native_player": false,
-  "alice_button": false
+  "native_player": true,
+  "alice_button": true
 }
 ```
 
@@ -127,18 +130,21 @@ yam install ./station-airplay-2.0.0-yandexstation_2.yampkg
 | `voice` | вкл | голосовые команды через runtime Luna (`ipc.speech` + `commands`) |
 | `native_volume` | вкл | слайдер отправителя двигает громкость станции через `/api/volume` |
 | `leds` | вкл | индикация на кольце или экране, где она поддерживается |
-| `ducking` | выкл | приглушает AirPlay, пока Алиса слушает и говорит |
-| `native_player` | выкл | после паузы отдаёт воспроизведение штатному плееру Quasar |
-| `alice_button` | выкл | пауза по физической кнопке Алисы |
+| `ducking` | вкл | приглушает AirPlay, пока Алиса слушает и говорит |
+| `native_player` | вкл при Quasar | после паузы отдаёт воспроизведение штатному плееру Quasar |
+| `alice_button` | вкл при Quasar | пауза по физической кнопке Алисы |
 
-Три выключенных флага — не забытые «галочки», а режимы, которые меняют
-поведение самой Алисы:
+`native_player` и `alice_button` включаются не «слепо»: при первом запуске
+launcher проверяет, есть ли штатный Quasar CLI (`/system/vendor/quasar/q`) и
+поддерживает ли модель кнопку Алисы. На живой колонке с полной прошивкой
+включается весь набор; в эмуляторе без Quasar остаются голос, громкость,
+подсветка и ducking. Если флаг всё же окажется включённым на плате без
+Quasar, preflight отключит только его — приёмник продолжит работать.
 
-- `ducking` требует живого speech-runtime и на практике «качает» громкость,
-  если Алиса слышит фоновую речь; включайте, если нужен именно этот сценарий.
-- `native_player` и `alice_button` работают только вместе со штатным Quasar CLI.
-  На плате без него preflight не проходит, и плагин вообще не запускается —
-  поэтому дефолт `false` безопаснее.
+`ducking` меняет поведение Алисы: она приглушает AirPlay, пока слушает и
+говорит. Если это не нужно, выключите флаг вручную.
+
+Уже созданный файл launcher не перезаписывает: свои правки сохраняются.
 
 После правки файла перезапустите плагин:
 

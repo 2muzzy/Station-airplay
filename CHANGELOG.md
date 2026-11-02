@@ -1,3 +1,14 @@
+## 2.0.1
+
+- Controls are on by default: `ducking` joins `voice`, `native_volume` and
+  `leds`. The launcher enables `native_player` and `alice_button` on stock
+  firmware where the Quasar CLI and the Alice keypad are present; emulators
+  and modified firmware keep the safe subset.
+- The controls preflight degrades an unavailable optional feature instead of
+  refusing to start. A stale `airplay-controls.json` or a board without
+  Quasar still gets a working AirPlay receiver, with a log line saying which
+  feature was disabled.
+
 ## 2.0.0
 
 First release of the standalone fork.

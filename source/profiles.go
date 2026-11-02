@@ -98,7 +98,7 @@ func runWithControls(ctx context.Context, sharedAudio bool, controls *controlsCo
 		return err
 	}
 	if controls != nil {
-		if err = controlsPreflight(ctx, api, d, *controls); err != nil {
+		if err = controlsPreflight(ctx, api, d, controls); err != nil {
 			return err
 		}
 	}
