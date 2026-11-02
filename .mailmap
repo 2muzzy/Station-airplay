@@ -1,0 +1,5 @@
+# Keep the historical bench identities attached to the maintainer in the
+# contributor view; those commits were made from the home-lab workspace.
+Ruslan <ryysel@gmail.com> <rus@localhost>
+Ruslan <ryysel@gmail.com> <rus@local>
+Ruslan <ryysel@gmail.com> Greathorse Home Lab <home-lab@localhost>
