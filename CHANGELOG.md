@@ -5,9 +5,11 @@ First release of the standalone fork.
 - Install as `airplay/airplay-luna` from the YAM v2 registry. Luna is pulled in
   as a dependency and a package hook enables the plugin, so a fresh station is
   one command with no manual step in the web UI.
-- Voice control is enabled by default on every profile, including Mini and
-  Midi. Registry launchers now pass `--controls-config` where the source
-  package was audio-only.
+- Voice control is enabled by default on every profile that ships shared
+  controls (Station 2, Mini, Mini 2, Lite, Lite 2). The Mini launcher was
+  audio-only in the source package and now passes `--controls-config` too.
+  Midi, Station 3 and Mini 3 stay audio-only until controls are accepted
+  there.
 - Station volume is owned by Luna through `/api/volume`, with a direct ALSA
   write when Luna's volume manager is not listening.
 - Native D-Bus client: the private bus is tried first, then the system bus, so
