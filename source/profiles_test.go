@@ -46,7 +46,10 @@ func TestReceiverLogsStayBounded(t *testing.T) {
 func TestSharedProfilesKeepProvenAudioContract(t *testing.T) {
 	for _, tc := range []struct{ model, pcm, abi, icon string }{
 		{"yandexstation_2", "plug:dmix_spk", "armhf", "AudioAccessory1,1"},
+		{"yandexstation_3", "speakers", "armhf", "AudioAccessory5,1"},
+		{"yandexmini_2", "default", "armhf", "AudioAccessory5,1"},
 		{"yandexmini_3_pro", "speakers", "aarch64", "AudioAccessory5,1"},
+		{"bergamot", "speakers", "armhf", "AudioAccessory5,1"},
 		{"yandexmicro", "plug:dmix_spk", "armhf", "AudioAccessory5,1"},
 		{"yandexmini", "softvol", "armhf", "AudioAccessory5,1"},
 		{"YandexStationMini", "softvol", "armhf", "AudioAccessory5,1"},
@@ -59,6 +62,9 @@ func TestSharedProfilesKeepProvenAudioContract(t *testing.T) {
 			if p.pcm != tc.pcm || p.receiverABI != tc.abi || !p.quasarCoexist {
 				t.Fatalf("wrong ABI/audio contract: %+v", p)
 			}
+			if tc.model == "yandexstation_3" && !p.packagedDBus {
+				t.Fatal("Station 3 must use the packaged armhf D-Bus")
+			}
 			conf := receiverConfig(p)
 			for _, s := range []string{tc.pcm, tc.icon, "port = 5000", "output_rate = 48000", "output_channels = 2", "session_timeout = 60"} {
 				if !strings.Contains(conf, s) {
@@ -70,7 +76,7 @@ func TestSharedProfilesKeepProvenAudioContract(t *testing.T) {
 			}
 		})
 	}
-	for _, model := range []string{"", "yandexmini_2", "cucumber", "unknown"} {
+	for _, model := range []string{"", "yandexmini_2_unverified", "cucumber", "unknown"} {
 		if _, ok := profileFor(model); ok {
 			t.Fatalf("model %q guessed instead of rejected", model)
 		}
@@ -113,7 +119,7 @@ func TestChildrenCannotInheritYAMTokenOrPlumLibraries(t *testing.T) {
 }
 
 func TestStockMDNSHostname(t *testing.T) {
-	for model, want := range map[string]string{"yandexplum": "YandexLite-gen2-TEST123", "yandexstation_2": "yandex-station-gen2-TEST123", "yandexmini_3_pro": "Yandex-Station-Mini-3-Pro-TEST123", "yandexmicro": "yandexmicro-TEST123"} {
+	for model, want := range map[string]string{"yandexplum": "YandexLite-gen2-TEST123", "yandexstation_2": "yandex-station-gen2-TEST123", "yandexmini_3_pro": "Yandex-Station-Mini-3-Pro-TEST123", "bergamot": "YandexMini3-TEST123", "yandexmicro": "yandexmicro-TEST123"} {
 		p, _ := profileFor(model)
 		got, err := stockHostname(p.mdnsHostPrefix, "root=ubi androidboot.serialno=TEST123 quiet")
 		if err != nil || got != want {
@@ -156,5 +162,79 @@ func TestMiniUsesFirmwareALSAAndPackagedDBus(t *testing.T) {
 	}
 	if bin, args := dbusCommand("/pkg", station2, "dbus-send"); bin != "/usr/bin/dbus-send" || len(args) != 0 {
 		t.Fatalf("Station 2 must keep firmware D-Bus: %s %v", bin, args)
+	}
+}
+
+func TestClocklessLiteUsesSharedAudio(t *testing.T) {
+	for _, model := range []string{"plum", "yandexplum"} {
+		p, ok := profileForDevice(yamDevice{Model: model}, false)
+		if !ok || p.pcm != "speakers" || !p.quasarCoexist || p.receiverABI != "armhf" || p.leds != 0 {
+			t.Fatalf("clockless Lite must share audio without UI: %+v", p)
+		}
+		p, ok = profileForDevice(yamDevice{Model: model, Features: []string{"display.clock.segment.v1"}}, false)
+		if !ok || p.pcm != "plug:dmix_spk" || p.leds != 3 || !p.ui || !p.quasarCoexist {
+			t.Fatal("upstream Light 2 display renderer changed")
+		}
+	}
+	if _, ok := profileForDevice(yamDevice{Model: "unknown"}, false); ok {
+		t.Fatal("ambiguous hardware must not be guessed")
+	}
+}
+
+// Captured YAM reports from the Lite pilot include this clock capability.
+// Shared audio must therefore be explicit, not inferred from clock absence.
+func TestPlumSharedOptInWithReportedClock(t *testing.T) {
+	for _, model := range []string{"plum", "yandexplum"} {
+		d := yamDevice{Model: model, Architecture: "aarch64", Features: []string{"display.clock.segment.v1", "led.ring.rgb", "led.ring.3", "audio.volume.alsa"}}
+		p, ok := profileForDevice(d, true)
+		if !ok || p.pcm != "speakers" || !p.quasarCoexist || p.receiverABI != "armhf" || p.leds != 0 {
+			t.Fatalf("shared opt-in entered exclusive/UI profile: %+v", p)
+		}
+		legacy, ok := profileForDevice(d, false)
+		if !ok || legacy.pcm != "plug:dmix_spk" || legacy.leds != 3 || !legacy.ui || !legacy.quasarCoexist {
+			t.Fatal("upstream clock-equipped Light 2 profile changed")
+		}
+	}
+	if _, ok := profileForDevice(yamDevice{Model: "unknown"}, true); ok {
+		t.Fatal("shared mode must not bypass the model guard")
+	}
+}
+
+func TestControlsDoNotSilentlyLoseTheirLoopToUpstreamDisplay(t *testing.T) {
+	clock := yamDevice{Model: "yandexplum", Features: []string{"display.clock.segment.v1"}}
+	upstream, ok := profileForDevice(clock, false)
+	if !ok || !upstream.ui {
+		t.Fatal("missing upstream display mode")
+	}
+	if err := validateControlRenderer(upstream, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateControlRenderer(upstream, &controlsConfig{}); err == nil || !strings.Contains(err.Error(), "--shared-audio") {
+		t.Fatalf("display and controls were combined: %v", err)
+	}
+	audioOnly, ok := profileForDevice(clock, true)
+	if !ok || audioOnly.ui {
+		t.Fatal("explicit shared mode retained upstream renderer")
+	}
+	if err := validateControlRenderer(audioOnly, &controlsConfig{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, model := range []string{"yandexmini_2", "yandexstation_2", "yandexmicro"} {
+		p, ok := profileFor(model)
+		if !ok {
+			t.Fatal(model)
+		}
+		if err := validateControlRenderer(p, &controlsConfig{}); err != nil {
+			t.Fatal(model, err)
+		}
+	}
+	for _, model := range []string{"yandexmidi", "yandexmini_3_pro", "yandexmini", "YandexStationMini"} {
+		p, ok := profileFor(model)
+		if !ok {
+			t.Fatal(model)
+		}
+		if err := validateControlRenderer(p, &controlsConfig{}); err == nil {
+			t.Fatal("unsupported controls enabled", model)
+		}
 	}
 }

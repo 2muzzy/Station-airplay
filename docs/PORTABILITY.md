@@ -1,5 +1,11 @@
 # Поддержка разных Яндекс Станций
 
+Предлагаемое расширение добавляет точный `yandexmini_2` и явный `--shared-audio`
+для `plum`/`yandexplum`: общий PCM `speakers` без часов и RGB, при этом профиль
+по умолчанию (`plug:dmix_spk` с часами и 3 RGB) не меняется. Комната берётся из
+общего YAM `device.room`, а не из model override.
+[Профили/фактические проверки](SHARED_MODELS.md), [комнаты](ROOMS.md).
+
 Проект ориентирован на линейку устройств, но backend AirPlay 2 для Plum содержит **Plum-специфичные** предположения:
 
 1. Проверка модели `plum` или `yandexplum` в `verifyYAM`.
@@ -24,7 +30,7 @@
 
 ## Профили 1.3.0
 
-`source/profiles.go` выбирает точную модель YAM. Для Станции 2 и Мини 3 Про используются отдельные ABI receiver и проверенные shared ALSA PCM; clock/RGB не требуются и не вызываются. Запуск, stop, enable/disable и логи принадлежат YAM. Прежняя Plum-ветка сохранена; ограничения выше описывают её AirPlay2 renderer. [Миграция и проверки](SHARED_MODELS.md), [инструкция для новых вкладов](../CONTRIBUTE.md).
+`source/profiles.go` выбирает точную модель YAM. Для Станции 2, Мини 3 (`bergamot`, ARMhf, `speakers`) и Мини 3 Про используются отдельные ABI receiver и проверенные shared ALSA PCM; clock/RGB не требуются и не вызываются. Запуск, stop, enable/disable и логи принадлежат YAM. Прежняя Plum-ветка сохранена; ограничения выше описывают её AirPlay2 renderer. [Миграция и проверки](SHARED_MODELS.md), [инструкция для новых вкладов](../CONTRIBUTE.md).
 
 Оба shared-профиля используют AirPlay 2 (Shairport 5.6.2 / NQPTP 1.2.9),
 48 кГц/S16_LE и объявление HomePod. [ABI, сборка и границы возможностей](AIRPLAY2.md).

@@ -10,6 +10,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"math"
@@ -28,7 +29,7 @@ import (
 )
 
 const (
-	version      = "Station airplay 1.4.3"
+	version      = "Station airplay 2.0.0"
 	audioFIFO    = "/tmp/sps.fifo"
 	metadataFIFO = "/tmp/shairport-sync-ap2-metadata"
 	brightness   = 170
@@ -36,24 +37,38 @@ const (
 
 type yamAPI struct {
 	base, token string
+	tokenHeader string
 	client      *http.Client
 }
 type yamDevice struct {
 	Model        string   `json:"model"`
 	Architecture string   `json:"architecture"`
 	Features     []string `json:"features"`
+	Room         string   `json:"room"`
 }
 
 func newYAMAPI() (*yamAPI, error) {
-	raw, token := os.Getenv("YAM_API_URL"), os.Getenv("YAM_API_TOKEN")
-	if raw == "" || token == "" {
-		return nil, errors.New("missing YAM_API_URL or YAM_API_TOKEN: start through yam enable/run, not directly")
+	credentials, err := runtimeAPIEnvironment()
+	if err != nil {
+		return nil, err
 	}
-	u, err := url.Parse(raw)
+	u, err := url.Parse(credentials.url)
 	if err != nil || u.Scheme != "http" || (u.Hostname() != "127.0.0.1" && u.Hostname() != "localhost" && u.Hostname() != "::1" && !ownAddress(u.Hostname())) {
-		return nil, errors.New("YAM_API_URL must be a loopback or own-interface HTTP address")
+		return nil, errors.New("runtime API URL must be a loopback or own-interface HTTP address")
 	}
-	return &yamAPI{base: strings.TrimRight(raw, "/"), token: token, client: &http.Client{Timeout: 1200 * time.Millisecond}}, nil
+	// Authenticated traffic is local even when BetterYAM binds its LAN IP.
+	// Never route it through an environment proxy or follow a redirect with
+	// either runtime token header to a different endpoint.
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil
+	client := &http.Client{
+		Timeout:   1200 * time.Millisecond,
+		Transport: transport,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	return &yamAPI{base: strings.TrimRight(credentials.url, "/"), token: credentials.token, tokenHeader: credentials.header, client: client}, nil
 }
 
 // ownAddress: BetterYAM binds only the LAN address and passes it as
@@ -75,6 +90,9 @@ func ownAddress(host string) bool {
 	return false
 }
 func (a *yamAPI) request(method, path string, payload interface{}, dest interface{}) error {
+	return a.requestContext(context.Background(), method, path, payload, dest)
+}
+func (a *yamAPI) requestContext(ctx context.Context, method, path string, payload interface{}, dest interface{}) error {
 	var body io.Reader
 	if payload != nil {
 		j, e := json.Marshal(payload)
@@ -83,11 +101,11 @@ func (a *yamAPI) request(method, path string, payload interface{}, dest interfac
 		}
 		body = bytes.NewReader(j)
 	}
-	req, e := http.NewRequest(method, a.base+path, body)
+	req, e := http.NewRequestWithContext(ctx, method, a.base+path, body)
 	if e != nil {
 		return e
 	}
-	req.Header.Set("X-YAM-Token", a.token)
+	req.Header.Set(a.tokenHeader, a.token)
 	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -174,9 +192,18 @@ var (
 	// YandexLite-gen2-<device id>. /etc/asound.conf mixes on dmix_spk.
 	plumProfile = stationProfile{name: "Yandex Station Light 2 AirPlay", models: []string{"yandexplum", "plum"}, leds: 3, digitBase: 0, colon: []string{"DH", "DL"}, pcm: "plug:dmix_spk", quasarCoexist: true, mdnsHostPrefix: "YandexLite-gen2", receiverABI: "armhf", airplayModel: "AudioAccessory5,1", ui: true}
 	midiProfile = stationProfile{name: "midi", models: []string{"yandexmidi"}, leds: 24, digitBase: 1, quasarCoexist: true, mdnsHostPrefix: "yandex-station-midi", pipeOutput: true, airplayModel: "AudioAccessory1,1"}
-	profiles    = []stationProfile{plumProfile, midiProfile,
+	// Shared audio-only profiles: no clock/RGB requirements, Alice stays running.
+	mini2Profile      = stationProfile{name: "Yandex Mini 2 AirPlay", models: []string{"yandexmini_2"}, pcm: "default", quasarCoexist: true, mdnsHostPrefix: "yandexmini-2", receiverABI: "armhf", airplayModel: "AudioAccessory5,1"}
+	plumSharedProfile = stationProfile{name: "Yandex Lite 2 AirPlay", models: []string{"yandexplum", "plum"}, pcm: "speakers", quasarCoexist: true, mdnsHostPrefix: "YandexLite-gen2", receiverABI: "armhf", airplayModel: "AudioAccessory5,1"}
+	profiles          = []stationProfile{plumProfile, midiProfile, mini2Profile,
 		{name: "Yandex Station 2 AirPlay", models: []string{"yandexstation_2"}, pcm: "plug:dmix_spk", quasarCoexist: true, mdnsHostPrefix: "yandex-station-gen2", receiverABI: "armhf", airplayModel: "AudioAccessory1,1"},
+		// Station 3 (orion) reports its own model id. Like the original Mini it
+		// ships no usable system D-Bus daemon, so run the packaged ARMhf one
+		// behind its loader; the receiver and speaker PCM match the other
+		// AirPlay 2 boards.
+		{name: "Yandex Station 3 AirPlay", models: []string{"yandexstation_3"}, pcm: "speakers", quasarCoexist: true, mdnsHostPrefix: "yandex-station-3", receiverABI: "armhf", airplayModel: "AudioAccessory5,1", packagedDBus: true},
 		{name: "Yandex Mini 3 Pro AirPlay", models: []string{"yandexmini_3_pro"}, pcm: "speakers", quasarCoexist: true, mdnsHostPrefix: "Yandex-Station-Mini-3-Pro", receiverABI: "aarch64", airplayModel: "AudioAccessory5,1"},
+		{name: "Yandex Mini 3 AirPlay", models: []string{"bergamot"}, pcm: "speakers", quasarCoexist: true, mdnsHostPrefix: "YandexMini3", receiverABI: "armhf", airplayModel: "AudioAccessory5,1"},
 		{name: "Yandex Station Lite AirPlay", models: []string{"yandexmicro"}, pcm: "plug:dmix_spk", quasarCoexist: true, mdnsHostPrefix: "yandexmicro", receiverABI: "armhf", airplayModel: "AudioAccessory5,1"},
 		// Mini (Amlogic AXG, Linkplay firmware): ARMhf userspace on an AArch64
 		// kernel. Quasar's default is plug -> softvol "Master" -> dmix "dmixer"
@@ -1030,7 +1057,7 @@ func runPlum(ctx context.Context) error {
 			return e
 		}
 		defer volume.stop()
-		fmt.Println("station volume: the sender's slider sets the station volume via the station-volume package")
+		fmt.Printf("station volume: the sender's slider sets the station volume via %s\n", volume.backend())
 	}
 	fmt.Printf("%s running on %s (YAM clock+ring; no buttons)\n", version, hw.name)
 	exits := make(chan exitInfo, len(children))
@@ -1069,10 +1096,8 @@ func runPlum(ctx context.Context) error {
 					volume.set(state.volume)
 					state.senderVolume = false
 				}
-				volume.poll(func(percent int) {
-					if state.inSession(now) { // idle: Alice shows her own volume
-						state.showVolume(percent, now)
-					}
+				volume.poll(state.inSession(now), func(percent int) {
+					state.showVolume(percent, now)
 				})
 			}
 			if vis != nil {
@@ -1145,7 +1170,15 @@ func runPlum(ctx context.Context) error {
 func main() {
 	// Packaged programs use an explicit loader; keep private libc off stock children.
 	_ = os.Unsetenv("LD_LIBRARY_PATH")
-	if len(os.Args) > 1 && os.Args[1] == "--version" {
+	sharedAudio := flag.Bool("shared-audio", false, "use audio-only shared PCM on supported Plum devices; keep Alice running")
+	controlsPath := flag.String("controls-config", "", "opt-in shared controls JSON (requires media-enabled YAM and receiver)")
+	showVersion := flag.Bool("version", false, "print version and exit")
+	flag.Parse()
+	if flag.NArg() != 0 {
+		fmt.Fprintln(os.Stderr, "station-airplay: unexpected positional arguments")
+		os.Exit(2)
+	}
+	if *showVersion {
 		fmt.Println(version)
 		return
 	}
@@ -1154,7 +1187,15 @@ func main() {
 	// yamd 0.1.x does not set a parent-death signal on binary plugins. Retire
 	// this service if its owning daemon disappears, before a replacement starts.
 	go watchParent(ctx, cancel, os.Getppid(), os.Getppid)
-	if e := run(ctx); e != nil {
+	controls, err := loadControlsOptional(*controlsPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "controls configuration:", err)
+		os.Exit(1)
+	}
+	if controls == nil && *controlsPath != "" {
+		fmt.Fprintln(os.Stderr, "controls configuration not found, shared controls disabled:", *controlsPath)
+	}
+	if e := runWithControls(ctx, *sharedAudio, controls); e != nil {
 		fmt.Fprintln(os.Stderr, "station-airplay:", e)
 		os.Exit(1)
 	}
