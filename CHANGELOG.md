@@ -1,3 +1,28 @@
+## 2.0.4
+
+- The install hook speaks JSON to the Luna API. A stock Luna rejects a form
+  POST with 403, which the 2.0.3 hook could only interpret as "Luna is not up"
+  and retried for 20 minutes.
+- The hook turns on `allow_plugin_binaries` through `/api/settings` when Luna
+  answers `binary execution disabled by administrator`. A stock build ships
+  the flag off, so the plugin could never start on a fresh install.
+- A model without a qualified control profile degrades to audio-only instead
+  of refusing to start. On the original Mini the plugin exited immediately
+  with "shared controls for the original Mini packaged D-Bus profile are not
+  qualified", leaving a dead service; Midi, Station 3 and Mini 3 hit the same
+  path. AirPlay keeps working, voice and station volume stay off.
+- The package description is Russian and lists what the receiver does: shared
+  audio with Alice, voice control, sender volume, multiroom, indication and
+  autostart.
+- `yam/luna` is a recommendation, not a dependency. The registry has no Luna
+  artifact for `yandexmidi` or `orion`, so the hard dependency left a Midi or
+  Station 3 unable to install the package at all, even though the device runs a
+  suitable Luna. Verified on the bench: both platforms install now.
+- The install hook no longer relies on the API to allow binary plugins. Device
+  wget is BusyBox and cannot issue a PUT, so the worker falls back to writing
+  `allow_plugin_binaries = true` into Luna's `settings.toml` and restarting
+  Luna with its own command line. Verified on a BusyBox guest.
+
 ## 2.0.3
 
 - The install hook detaches its worker with `setsid`. YAM ends the postinstall

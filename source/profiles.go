@@ -87,8 +87,12 @@ func runWithControls(ctx context.Context, sharedAudio bool, controls *controlsCo
 	if !ok {
 		return fmt.Errorf("unsupported YAM model %q", d.Model)
 	}
+	// A model whose control profile is not qualified still has to play audio:
+	// the original Mini, Midi, Station 3 and Mini 3 have no validated D-Bus
+	// transport, and refusing to start left them with a dead plugin.
 	if err = validateControlRenderer(p, controls); err != nil {
-		return err
+		fmt.Fprintf(os.Stderr, "station-airplay: shared controls disabled: %v\n", err)
+		controls = nil
 	}
 	if p.pcm == "" {
 		return runPlum(ctx)
