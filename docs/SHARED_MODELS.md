@@ -1,144 +1,68 @@
-# Shared audio profiles
+# Модели, аудиопрофили и проверки
 
-| YAM model | Native audio ABI | Shared PCM | Icon |
+Профиль выбирается по точному model ID из runtime API Luna/YAM. Он задаёт аудиовыход и библиотеки прошивки. Совпадения названия модели в манифесте недостаточно: для готовой установки нужен также пакет нужной платформы и рабочий launcher.
+
+## Текущая поставка YAM v2
+
+[Таблица README](../README.md#поддерживаемые-модели) описывает пакеты 2.0.4 и различает проверки на колонке и эмуляторе. Станция 2, Мини 2, Лайт 2 и Лайт запускаются с управлением. Мини, Миди, Станция 3 и Мини 3 работают без полного shared-управления.
+
+На Мини и Станции 3 используется пакетный D-Bus, для которого control-профиль не квалифицирован. Миди использует прежний FIFO-путь. Launcher Мини 3 запускает аудиорежим. У Мини 3 Про есть AArch64-аудиопрофиль в исходниках, но готового пакета v2 2.0.4 нет; его управление тоже не квалифицировано.
+
+`audio-only` в сообщениях плагина означает отсутствие shared-управления, а не отключение Алисы.
+
+## Аудиоконтракт в исходниках
+
+ABI — формат исполняемых программ и библиотек. На большинстве станций AArch64-ядро запускает ARMhf userspace. Поэтому `uname -m` не определяет, какой приёмник нужен.
+
+| Модель из API | ABI приёмника | PCM — имя ALSA-выхода | Путь звука и индикации |
 |---|---|---|---|
-| `yandexstation_2` | ARMhf | `plug:dmix_spk` | HomePod |
-| `yandexmini_3_pro` | AArch64 | `speakers` | HomePod mini |
-| `bergamot` (Мини 3) | ARMhf | `speakers` | HomePod mini |
-| `yandexplum`, `plum` (Лайт 2) | ARMhf | `plug:dmix_spk` | HomePod mini |
-| `yandexplum`, `plum`, `--shared-audio` | ARMhf | `speakers` | HomePod mini |
-| `yandexmini_2` (Мини 2) | ARMhf | `default` | HomePod mini |
-| `yandexmicro` (Лайт) | ARMhf | `plug:dmix_spk` | HomePod mini |
-| `yandexmini`, `YandexStationMini` (Мини) | ARMhf | `softvol` | HomePod mini |
+| `yandexstation_2` | ARMhf | `plug:dmix_spk` | Общий микшер; shared-индикация framebuffer при включённом управлении |
+| `yandexmini_2` | ARMhf | `default` | Общий микшер; shared-индикация при наличии возможностей |
+| `plum`, `yandexplum` с `--shared-audio` | ARMhf | `speakers` | Общий микшер; без старого визуализатора часов |
+| `plum`, `yandexplum` с сегментными часами без флага | ARMhf | `plug:dmix_spk` через `spk_tee` | Тот же звук плюс копия PCM для визуализатора |
+| `yandexmicro` | ARMhf | `plug:dmix_spk` | Общий микшер |
+| `yandexmini`, `YandexStationMini` | ARMhf | `softvol` | Общий микшер; ALSA из `/system/vendor/quasar/libs/libasound.so.2` |
+| `yandexstation_3` | ARMhf | `speakers` | Общий микшер; пакетный D-Bus |
+| `bergamot` | ARMhf | `speakers` | Общий микшер |
+| `yandexmini_3_pro` | AArch64 | `speakers` | Общий микшер; отдельный receiver ABI |
+| `yandexmidi` | ARMhf | FIFO → системный `aplay -D speakers` | Старая ветка с визуализатором Миди |
 
-Test firmware: Station 2 `0.369.1.50.4794649087.20261021.295`, Mini 3 Pro
-`0.369.1.50.4795647264.20261021.107`, Mini 3 `0.369.1.50.4794652521.20261021.117`.
-Station 2 and Mini 3 Pro were checked with YAM 0.1.13. Those kernels execute the single
-static ARMv7 supervisor. Audio uses 48 kHz/S16 stereo and retains Alice.
-Both mixers reject 44.1 kHz when resampling is disabled in the new receiver.
-Station 2, Mini 3, Mini 3 Pro and Lite do not touch clock or RGB. Light 2 plays through the same shared mixer and, while the service is running, YAM holds its segment clock and 3 LEDs. The hostname maind already publishes is `YandexLite-gen2-<device id>`.
+Прямые shared-профили настроены на 48 кГц/S16_LE/стерео, порт RTSP 5000. Миди передаёт в `aplay` 44,1 кГц/S16_LE/стерео и использует RTSP 7000. NQPTP один и тот же ARMhf для обеих ABI.
 
-## Mini 2 and the Lite 2 shared-audio opt-in
+Go-профили находятся в [service.go](../source/service.go), выбор режима и запуск — в [profiles.go](../source/profiles.go). Корневой legacy `plugin.toml` и список пакетов v2 не совпадают буквально: например, профиль Станции 3 есть в Go-коде, но его model ID отсутствует в allowlist этого legacy-манифеста.
 
-Mini 2 (`yandexmini_2`) uses the firmware `default` PCM, which already mixes
-through Master softvol/dmix next to Alice. It is an ARMhf profile on an AArch64
-kernel and does not take clock or RGB.
+## Особенности прошивок
 
-Light 2 already shares `plug:dmix_spk` with Alice and, while the service runs,
-YAM holds its segment clock and 3 LEDs. `--shared-audio` selects an audio-only
-profile instead: shared PCM `speakers`, no clock and no RGB. Clock capability is
-not a reliable selector — both tested Lite 2 variants advertise segment clocks —
-so the audio-only profile is chosen by the explicit option, or automatically when
-YAM reports no segment clock. Unknown models still fail closed.
-
-Do not replace system ALSA, patch Quasar, change rootfs or use an exclusive
-hardware PCM. One supervisor/native engine lifecycle remains owned by YAM: no
-per-model second manager, former private receiver service or old runtime
-directory is called. Rooms are global YAM metadata, not this option; see
-[ROOMS.md](ROOMS.md).
-
-### Actual software validation, 26 October 2026
-
-| Hardware | Firmware | Validated |
+| Условие | Почему общий подход не подходит | Как устроен профиль |
 |---|---|---|
-| Mini 2 | `0.369.1.50.4794659041.20261021.299` | ARMhf load, start/stop, port retirement, RTSP/discovery, room name |
-| Lite 2 Plum | `0.369.1.50.4795647582.20261021.133` | `--shared-audio`, Alice process retained, same checks |
-| Lite 2 Prune (YAM reports `yandexplum`) | `0.369.1.50.4794654278.20261021.133` | same checks; no invented Prune model/capabilities |
-| Station 2 | `0.369.1.50.4794649087.20261021.295` | same checks, existing Station 2 profile unchanged |
+| Миди: пакетная ALSA не присоединяется к штатному dmix | Приёмник получает `unable to create IPC shm instance` | Звук идёт через FIFO и системный `aplay`. |
+| Мини: `plug:` загружает конвертер, недоступный в окружении приёмника | Системный `aplay` может работать, а приёмник пишет `Unable to set hw parameters ... No such file or directory` | Открывается `softvol`, предзагружается ALSA из Quasar. |
+| Мини: штатный hostname построен не из boot serial | Придуманное имя Avahi не совпадёт со штатным объявлением | Используется `mv_uuid` из Linkplay-конфигурации. |
+| Мини/Станция 3 без штатного D-Bus | Нельзя вызвать отсутствующий системный daemon | Профиль запускает пакетный D-Bus через ARMhf-загрузчик. |
+| Лайт 2 без `--shared-audio` и с часами | Старый визуализатор уже владеет экраном | Shared-controls не запускаются поверх него. |
 
-Local build used Shairport 5.6.2/smi11 and NQPTP 1.2.9/smi11. The packed ARMv7
-supervisor ran on all four AArch64 kernels with ARMhf userspace. `/info` returned
-the profile's HomePod/HomePod mini model. After disable, owned children and
-timing/RTSP ports retired; re-enable recovered discovery. Native configs/library
-hashes, Alice/Jarvis process identities, Master and read-only rootfs stayed
-unchanged. Room metadata persisted through a daemon restart, independently of the
-package.
+Не заменяйте штатную ALSA и не подменяйте model ID для обхода проверки. Новая прошивка может изменить PCM или ABI; её нужно проверять как отдельное окружение.
 
-**This is not listening acceptance of this commit.** The binary in this PR is
-rebuilt from the rebased source; the listening checks above belong to the pilot
-build. Real buffered music, Alice during playback, volume, multiroom, reconnect
-and phone icon caching still need an owner run on the exact package built here.
-No cold reboot was performed. Neither RTSP200 nor an advertised model proves
-audio, synchronization, lossless or 24-bit output.
+## Что подтверждали ранее
 
-## Install / rollback
+Эти результаты принадлежат указанным версиям. Они не доказывают, что каждый следующий runtime прошёл ту же проверку.
 
-Build per [BUILD.md](../source/BUILD.md), install the universal `.yap` through YAM,
-then enable `station-airplay`. With closed WAN, transfer the package from the PC.
-Do not change network/OTA policy or system ALSA/D-Bus/accounts.
+| Версия / дата | Устройства | Подтверждённый результат и предел |
+|---|---|---|
+| Базовая 1.3.1 | Станция 2 и Мини 3 Про | Реальный buffered AAC/48 кГц с iPhone, совместное воспроизведение, 331 с наблюдения, остановка/восстановление. Владелец не слышал обрывов и рассинхрона. |
+| 1.4.1 | Лайт, прошивка `0.369.1.46.4778262442.20261013.297` | Владелец слышал AirPlay при работающей Алисе. После настройки владельцем автозапуска YAM — два перезапуска станции. Длительный мультирум не проверен. |
+| 1.4.3 | Мини, прошивка `1.305.4.16.3237824040.20250721`, BetterYAM 0.1.18 | AirPlay 2 с iPhone, тестовый звук с Mac, Алиса, остановка детей и полный перезапуск. Длительный мультирум не проверен. |
+| Ранний профиль Мини 3 | `bergamot`, прошивка `0.369.1.50.4794652521.20261021.117` | Владелец подтвердил звук с iPhone, ползунок телефона и ответ Алисы во время музыки. |
+| 26–27 октября 2026 | Станция 2, Мини 2, две Лайт 2 | Голос, громкость, индикация и совместное воспроизведение: [отчёт управления](validation/CONTROLS_20261027.md), [отчёт мультирума](validation/CURRENT_PAIR_20261027.md). |
 
-Stop any previous receiver and its autostart first. For the previously tested
-`/data/local/airplay-station2` and `/data/local/airplay-mini3pro` layouts, the
-repository contains `support/migrate-shared.sh apply MODEL` / `rollback MODEL`;
-read it before applying. It preserves backups and guards the old launcher.
-YAM stop and disable are separate operations: disable+stop before reinstalling or
-restoring an older package. Keep the previous tested package for rollback.
+Ранние тестовые прошивки: Станция 2 — `0.369.1.50.4794649087.20261021.295`, Мини 2 — `0.369.1.50.4794659041.20261021.299`, Лайт 2 — `0.369.1.50.4795647582.20261021.133` и `0.369.1.50.4794654278.20261021.133`, Мини 3 Про — `0.369.1.50.4795647264.20261021.107`.
 
-## Validation / limits
+В ранних сеансах отмечали повторное подключение до 20–25 секунд и единичные ошибки подключения. Причина не установлена; участие jailbreak/tweaks не доказано. Это не следует описывать как исправленный дефект.
 
-The 1.3.1 baseline passed real iPhone buffered AAC/48 kHz playback on both and
-simultaneously, 331 seconds continuous observation, receiver/timer crash recovery,
-stop/start and protected-state comparisons. The owner reported no audible dropouts
-or noticeable desync. These results do not automatically validate a later rebuild.
+Эмулятор не воспроизводит реальный тракт Quasar: он подтверждает установку, запуск и режим, но не звук, микрофон, физическую индикацию или передачу штатному плееру. Lossless/surround, 24-битный выход и длительный дрейф отдельно не подтверждены.
 
-Known baseline issue: reconnection may take 20–25 seconds, Mini first then Station 2;
-earlier iOS connection errors and intermittent disappearance remain unexplained.
-One event-channel RTSP 400 was received from iPhone before a successful retry.
-The sender is jailbroken with tweaks; its contribution has not been isolated.
-No measured cause or fix is claimed. Lossless/surround input, 24-bit DAC output,
-Plum hardware and a full reboot after the latest package are unverified.
+## Миграция и новая модель
 
-Lite (`yandexmicro`), firmware `0.369.1.46.4778262442.20261013.297`, YAM latest
-release (2026-10): 1.4.1 runs the static ARMv7 supervisor on the AArch64 kernel,
-uses the ARMhf receiver with firmware ALSA preloaded on `plug:dmix_spk`, publishes
-via the stock `yandexmicro-<serial>` host. Owner confirmed audible iPhone playback
-with Alice still running. The YAM installer adds no boot hook on Lite; with an
-owner-added `/etc/init.d/S99zyamd` (start-stop-daemon, same command as the
-installer) yamd and the plugin came back after two reboots. Long-run stability and
-multiroom are unverified.
+Сначала остановите прежний приёмник и его автозапуск, затем устанавливайте пакет через YAM. `support/migrate-shared.sh` знает только прежние каталоги Станции 2 и Мини 3 Про; это не универсальная миграция.
 
-Mini (`yandexmini`, Amlogic AXG, Linkplay-based firmware
-`1.305.4.16.3237824040.20250721`), BetterYAM 0.1.18: 1.4.3 runs the static ARMv7
-supervisor on the AArch64 4.9 kernel and the ARMhf receiver with the firmware
-ALSA from `/system/vendor/quasar/libs` preloaded. Quasar plays on `default` =
-plug -> softvol `Master` -> asym -> dmix `dmixer` (hw:0,0, 48 kHz S16_LE);
-`/etc/asound.conf` is stale and the live config comes from `/tmp/alsa/asoundrc`.
-The receiver opens `softvol` directly. Every `plug:` PCM fails in the receiver
-with `Unable to set hw parameters ... No such file or directory`: this alsa-lib
-inserts a libsamplerate converter even for 48 kHz -> 48 kHz and the module only
-resolves on Quasar's `LD_LIBRARY_PATH`. System `aplay` passes the same PCM because
-it runs with that path, so probe in the receiver's loader environment. The station
-volume therefore scales AirPlay; the sender slider applies on top of it.
-
-The firmware has no `dbus-daemon`/`dbus-send`; the profile runs the packaged
-pair. maind publishes `yandexmini-<mv_uuid>` (`mv_uuid` in the Linkplay factory
-JSON `/vendor/new_nvram_config`, the value of the firmware `device_id` tool); the
-boot/CPU serial is a different id. Do not read `/sys/class/efuse` or
-`/sys/class/unifykeys` while looking for it: a plain read froze the speaker until
-it was power-cycled.
-
-BetterYAM binds only the LAN address unless told otherwise and passes that address
-as `YAM_API_URL`. The supervisor accepts it because it belongs to one of the
-speaker's own interfaces; any other non-loopback host is still rejected.
-Upstream yamd 0.1.18 does not recognise this Mini (no ring LEDs in sysfs, device
-tree only says `Amlogic`). The kernel logs `syscall 403` (`clock_gettime64`) from
-the glibc 2.36 runtime; glibc falls back and playback is unaffected.
-
-Owner confirmed audible iPhone AirPlay 2 playback with Alice still running; a
-RAOP test tone from a Mac also played. Stop leaves no plugin children; after a
-full reboot with the stock BetterYAM init script, the plugin and Alice came back
-without intervention.
-Long-run stability, multiroom and simultaneous playback with other stations are
-unverified.
-
-Mini 3 (`bergamot`, firmware `0.369.1.50.4794652521.20261021.117`): the ARMhf
-receiver plays on the shared `speakers` mixer with firmware ALSA from
-`/usr/lib/libasound.so.2`. maind publishes `YandexMini3-<serial>`. Clock and RGB
-stay with Alice. Current yamd reports `unknown` for `yandex,bergamot` and rewrites
-an id containing `yandexmini`, including `yandexmini_3`, to the first-generation
-Mini `yandexmini`. The stable id is `bergamot` in `device.toml`. Owner confirmed
-iPhone AirPlay 2 playback, the phone volume slider, and Alice answering while the
-stream plays.
-
-See [AIRPLAY2.md](AIRPLAY2.md) for protocol checks and
-[CONTRIBUTE.md](../CONTRIBUTE.md) for extension/icon rules.
+Для новой модели соберите факты о PCM, ABI и hostname, добавьте профиль и тесты, затем проверьте звук на устройстве: [ADD_STATION.md](ADD_STATION.md). Для проверки готовой установки используйте [чек-лист](CHECK_ON_YOUR_SPEAKER.md).

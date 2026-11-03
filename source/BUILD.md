@@ -1,53 +1,139 @@
-# Build
+# Сборка и упаковка
 
-Go >=1.23, Python >=3.8; Linux/WSL for tests. One universal YAM package.
+Обычная сборка заменяет Go-супервизор и упаковывает его с готовыми приёмниками из репозитория. Полная пересборка Shairport Sync и библиотек — отдельная процедура с кросс-компиляторами и подготовленными зависимостями.
+
+Makefile нет. Команды ниже запускаются из корня клона, если явно не указан `cd source`.
+
+## Инструменты и ОС
+
+| Инструмент или среда | Когда нужен | Почему |
+|---|---|---|
+| Go **1.23+** | Сборка и проверки супервизора | Версия указана в `go.mod`; Go скачивает зависимости из `go.sum`. |
+| Linux или WSL | Выполнение Go-тестов и целевой runtime | Код использует Linux-механизмы процессов, `/proc`, ALSA и D-Bus. Обычный `go test` на macOS не собирается из-за `Pdeathsig`. |
+| Python **3.8+** | `scripts/package.py` | Создаёт архив `.yap` с фиксированными метаданными. Python 3.11+ нужен для `tests/test_package.py`, который импортирует `tomllib`. |
+| UPX **5.2.1** | Компактный релизный пакет | Сжимает только статический Go-бинарник; на колонке декомпрессор не нужен. |
+| GCC/G++ и `make` | Полная сборка C/C++-компонентов | Shairport Sync, NQPTP, D-Bus и библиотеки написаны не на Go. Нужны ARMhf/AArch64 toolchain и совместимые заголовки. |
+| CMake, autoconf, automake, libtool, pkg-config, patch | Полная сборка runtime | Настраивают зависимости, применяют патчи и находят библиотеки в целевой среде. |
+
+На macOS можно кросс-компилировать Go-бинарник для Linux; для выполнения тестов используйте Linux/WSL или Linux-контейнер. Python-упаковщик работает также на macOS и Windows, но упаковывает Linux-бинарники — он не создаёт настольное приложение.
+
+## 1. Получить исходники
+
+```sh
+git clone https://github.com/ryysel/Station-airplay.git
+cd Station-airplay
+```
+
+Клон содержит `bin/` и `lib/` с уже собранным runtime. Если меняете только Go-код, их пересборка не нужна.
+
+## 2. Проверить Go-код на Linux
 
 ```sh
 cd source
 go test ./...
 go vet ./...
-GOOS=linux GOARCH=arm GOARM=7 CGO_ENABLED=0 go build -buildvcs=false -trimpath -ldflags='-s -w' -o ../bin/station-airplay .
+```
+
+Тесты проверяют выбор профиля, конфигурацию, управление и обращения к API. `go vet` ищет ошибки, которые может обнаружить статический анализ. Ни одна из этих команд не подтверждает звук на станции.
+
+Для изменений управления CI дополнительно выполняет:
+
+```sh
+go test -race -count=1 ./...
+```
+
+## 3. Собрать супервизор
+
+Из `source/`:
+
+```sh
+GOOS=linux GOARCH=arm GOARM=7 CGO_ENABLED=0 \
+  go build -buildvcs=false -trimpath -ldflags='-s -w' \
+  -o ../bin/station-airplay .
 cd ..
-upx --best --lzma bin/station-airplay # UPX 5.2.1; only the static supervisor
+```
+
+Получится один статический ARMv7-бинарник `bin/station-airplay`. `CGO_ENABLED=0` убирает зависимость самого супервизора от C-runtime; Shairport Sync и остальные дочерние программы всё ещё используют свои библиотеки. `-trimpath` убирает пути сборочной машины, `-s -w` — отладочные таблицы, `-buildvcs=false` — встраивание сведений VCS.
+
+В CI также проверяется AArch64-цель супервизора:
+
+```sh
+(cd source && GOOS=linux GOARCH=arm64 CGO_ENABLED=0 \
+  go build -buildvcs=false -trimpath -ldflags='-s -w' \
+  -o /tmp/station-airplay-aarch64 .)
+```
+
+Этот проверочный бинарник не заменяет ARMv7-файл в пакете. ABI приёмника выбирается отдельно по аудиобиблиотекам прошивки: AArch64-ядро не означает AArch64 userspace.
+
+## 4. Сжать и упаковать `.yap`
+
+Для релизной сборки используйте UPX 5.2.1, как в CI:
+
+```sh
+upx --best --lzma bin/station-airplay
 upx -t bin/station-airplay
 python3 scripts/package.py
 ```
 
-The checked-in executable is packed; `upx -d` restores it for inspection. Packing
-needs no installed decompressor on speakers. Test actual execution and
-`os.Executable()`-based package resolution on both kernels after changing packers.
+UPX меняет только супервизор; `upx -t` проверяет целостность упаковки. Сторонние ELF и библиотеки так не сжимайте. При смене упаковщика дополнительно проверьте запуск и определение каталога через `os.Executable()` на целевых ядрах.
 
-## Native components
+Упаковщик берёт `plugin.toml`, `bin/`, `lib/`, `config/`, `LICENSES/` и `third_party/licenses/`. Версия берётся из `plugin.toml`; для 2.0.4 результат — `dist/station-airplay-2.0.4.yap`. Скрипт печатает путь и SHA256. Исходники, документация и исходные архивы сторонних компонентов в пакет не входят.
 
-Prepare `AP2_BUILD_ROOT/{armhf,arm64}/sysroot` with the development packages pinned
-in `third_party/airplay2-build.json`. Host tools: GCC/G++13 ARMhf cross compilers,
-AArch64 GCC, CMake, autotools, make and libexpat1-dev headers. Captured firmware
-ALSA/D-Bus are private link inputs, plus OpenSSL3 for AArch64; never redistribute
-them. Then:
+Без UPX `python3 scripts/package.py` тоже создаст архив, но его размер может не пройти релизный лимит. Для проверки пакета с Python 3.11+:
 
 ```sh
+python3 tests/test_package.py
+```
+
+Проверка создаёт пакет заново и проверяет манифест, состав, ELF-архитектуры, права выполнения и суммарный распакованный размер **менее 14 МиБ**. Полные команды CI: [ci.yml](../.github/workflows/ci.yml).
+
+## `.yap` и `.yampkg` — разные результаты
+
+Упаковщик этого репозитория создаёт универсальный legacy `.yap` с ID `station-airplay`. Модельные `.yampkg` релиза 2.0.4 содержат манифест YAM v2, launcher Luna, начальный JSON и `postinstall`. Их ID в Luna — `airplay.airplay-luna`.
+
+Инструмента сборки этих `.yampkg` в текущем дереве нет. `go build` и `scripts/package.py` не воспроизводят их оболочку. Для установки готового пакета v2 используйте [Releases](https://github.com/ryysel/Station-airplay/releases) или реестр по [инструкции](../docs/INSTALLATION.md).
+
+## Полная сборка базового runtime
+
+Базовый путь использует GCC/G++ 13 и каталог `AP2_BUILD_ROOT` с отдельными `armhf/sysroot` и `arm64/sysroot`. Sysroot — копия целевых заголовков и библиотек, с которыми кросс-компилятор связывает программу для станции. Пакеты и версии зафиксированы в [airplay2-build.json](../third_party/airplay2-build.json).
+
+До запуска подготовьте sysroot и приватные входные файлы `stock-libasound.so.2`, `stock-libdbus-1.so.3` в каталогах обеих ABI; для AArch64 нужны также `stock-libcrypto.so.3` и `stock-libssl.so.3`. Они берутся из соответствующей прошивки для связывания. Их нельзя добавлять в распространяемый пакет. Для D-Bus также нужны заголовки `libexpat1-dev` на сборочной машине.
+
+С уже подготовленным каталогом:
+
+```sh
+export AP2_BUILD_ROOT=/absolute/path/to/prepared-build
 scripts/build-runtime.sh
 scripts/build-airplay2.sh armhf
 scripts/build-airplay2.sh arm64
 ```
 
-`build-runtime.sh` builds D-Bus1.16.2 (`libdbus-1`, plus `dbus-daemon`/`dbus-send` for
-firmwares without D-Bus, the Mini) without systemd/X11 and static Mbed TLS3.6.7
-crypto with `support/mbedtls-config.h`. Shairport uses RSA/AES/MD5/SHA, while
-pairing/AEAD remain in libsodium. The Mbed patch fixes an unconditional OpenSSL
-MD5 call in AirPlay2 identity generation and removes unused TLS/X509 link probes.
-It preserves the same digest bytes; it does not implement an AirPlay protocol.
-`homepod-model.patch` selects the same identity in Bonjour and `/info`.
+`build-runtime.sh` обновляет D-Bus 1.16.2, статическую криптографию Mbed TLS 3.6.7 и namespace-helper. `build-airplay2.sh` собирает FFmpeg 7.1.3, Shairport Sync 5.6.2 и NQPTP 1.2.9. Результаты приёмника и NQPTP находятся в `$AP2_BUILD_ROOT/<abi>/output/`; перед упаковкой нужные файлы переносятся в `bin/` и проверяются с библиотеками из `lib/`.
 
-Copy stripped ARMhf outputs to `bin/shairport-sync-ap2` and `bin/nqptp`, AArch64
-receiver to `bin/shairport-sync-ap2-aarch64`. Both use Shairport5.6.2/FFmpeg7.1.3;
-one ARMhf NQPTP1.2.9/smi11 serves both ABIs. Keep one ARMhf libc2.36/loader/libm/
-libplist set in `lib`, plus the necessary original Avahi0.7/ALSA dependencies.
-AArch64 loads firmware libc/ALSA/OpenSSL/D-Bus; only libplist is in `lib/aarch64`.
-Station2 explicitly preloads firmware ALSA for its shared dmix. Legacy Light/Midi
-keep their existing audio/renderers, using the common current ARMhf engine.
+Один ARMhf NQPTP обслуживает оба аудио-ABI. AArch64-приёмник использует штатные libc/ALSA/D-Bus/OpenSSL и пакетную libplist. ARMhf-приёмник использует приватный загрузчик и совместимую штатную ALSA для общего микшера. [Таблица профилей](../docs/SHARED_MODELS.md).
 
-After rebuilding, inspect `readelf -d/-V`, actual loader resolution and library
-closure. Preserve all selected codecs and legal notices. Check unit tests,
-metadata/clock/RGB, lifecycle/crash recovery, native audio and multiroom; new
-Light/Midi runtime upgrades require hardware validation by their owners.
+Базовый `build-airplay2.sh` отключает D-Bus-интерфейс Shairport Sync. Если заменить им control-enabled ARMhf-приёмник, звук может работать, но shared-управление будет потеряно. Для него нужен следующий путь.
+
+## Сборка приёмника с shared-управлением
+
+Используйте одноразовый Debian bullseye-контейнер. Смонтируйте репозиторий в `/repo`, а пустой постоянный сборочный каталог — в `/work`. Скрипты подготовки намеренно проверяют `/.dockerenv` и устанавливают пакеты внутри контейнера.
+
+Внутри подготовленного контейнера, из `/repo`:
+
+```sh
+scripts/prepare-build.sh
+scripts/prepare-armhf-deps.sh
+scripts/build-controls-runtime.sh armhf
+```
+
+Первые две команды требуют доступа к пакетным репозиториям: они ставят cross-toolchain и извлекают закреплённые libgcrypt/libgpg-error. Третья использует локальные исходные архивы и применяет патчи из `support/`: модель объявления, Mbed TLS, команды D-Bus, обнаружение DACP по IPv4 и обратный канал AirPlay 2 до начала музыки.
+
+Результат — `/work/armhf/shairport-sync`, рядом находятся логи сборки и отчёты `elf-dynamic.txt` / `elf-versions.txt`. Входы записаны в [controls-runtime-build.json](../third_party/controls-runtime-build.json). Перед заменой `bin/shairport-sync-ap2` проверьте разрешение всех динамических библиотек именно пакетным загрузчиком.
+
+Опубликованный рецепт ранее выполнялся с кешированным сборочным образом. Пересборка из чистого образа, полное закрепление исходников зависимостей и комплект материалов для перелинковки остаются отдельными проверками публикации. AArch64 shared-управление не квалифицировано.
+
+## Проверка после замены runtime
+
+Проверьте `readelf -d/-V`, зависимости загрузчика, лицензии и контрольные суммы. Затем проверьте на целевой колонке обнаружение, сопряжение, звук, Алису, громкость, остановку всех дочерних процессов и повторное подключение. Мультирум проверяйте отдельно на двух колонках.
+
+[Чек-лист на устройстве](../docs/CHECK_ON_YOUR_SPEAKER.md) и [происхождение компонентов](../third_party/README.md) задают границы результата. Успешная компиляция и ответ RTSP не подтверждают слышимый звук или точность синхронизации.

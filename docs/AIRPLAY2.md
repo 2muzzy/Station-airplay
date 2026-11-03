@@ -1,39 +1,65 @@
-# AirPlay 2 runtime
+# Как работает AirPlay 2 в плагине
 
-All models use upstream Shairport Sync **5.6.2**, FFmpeg **7.1.3** and one NQPTP
-**1.2.9/smi11**. There is one source engine, compiled for the two native audio
-ABIs: ARMhf for Light2/Lite/Midi/Station2 and AArch64 for Mini3Pro.
+Station-airplay принимает аудио на самой станции. Shairport Sync обрабатывает протокол и декодирует музыку, а Go-супервизор запускает процессы и связывает их с Luna.
 
-One packed static ARMv7 supervisor, one original Avahi0.7 daemon, one private
-ARMhf libc and one small namespace helper replace the parallel runtimes.
-The AArch64 receiver uses firmware libc/ALSA/D-Bus/OpenSSL and packaged libplist.
-ARMhf uses minimal static Mbed TLS crypto; no OpenSSL library is shipped.
-D-Bus is rebuilt without systemd, removing its unrelated dependency chain.
-No firmware library is redistributed and no receiver is downloaded at runtime.
+```text
+iPhone / iPad / Mac
+        │ AirPlay 2
+        ▼
+Shairport Sync ──► ALSA, общий микшер ──► динамики станции
+        │                     ▲
+        │ управление          └── штатный звук Алисы
+        ▼
+Go-супервизор ◄──► API Luna: речь, громкость, индикация
 
-Station2/Mini3Pro/Lite retain direct shared ALSA **48kHz/S16_LE stereo** and Alice.
-A single ARMhf receiver with external aplay was rejected for these profiles:
-it would remove native ALSA latency feedback and weaken multiroom synchronization.
-Midi retains the upstream FIFO/aplay path and renderer; Light2 retains its PCM/UI.
+Avahi: публикует приёмник в локальной сети
+NQPTP: согласует часы для воспроизведения AirPlay 2
+```
 
-The supervisor owns its children, checks ports, bounds RAM logs, retries crashes
-and keeps YAM tokens private. Private D-Bus/mount namespace preserve global system
-accounts and configuration. Build and package: [BUILD.md](../source/BUILD.md).
-One deterministic `.yap`, one YAM ID; no model-specific archive generator.
+## От запуска до звука
 
-Station2/Midi advertise HomePod; Mini3Pro/Light2/Lite advertise HomePod mini through
-`general.model`, consistently in Bonjour and `/info`. No HomePod/Siri feature
-capabilities are added. [CONTRIBUTE.md](../CONTRIBUTE.md) documents profile/icon rules.
+1. **Luna запускает плагин.** Хост выдаёт адрес и токен runtime API. Супервизор читает модель и возможности устройства, затем выбирает аудиопрофиль.
+2. **Супервизор проверяет окружение.** Он отклоняет неизвестную модель, проверяет отсутствие второго приёмника и занятых портов. Для shared-управления дополнительно проверяет нужные API и громкость.
+3. **Поднимается сетевой runtime.** На shared-пути создаются частная D-Bus-шина, Avahi и NQPTP. Системные аккаунты и конфигурация D-Bus при этом не заменяются.
+4. **Avahi публикует AirPlay.** Отправитель видит `_airplay._tcp` / `_raop._tcp` и добавляет колонку в меню. Для адреса используется имя, которое уже публикует штатное ПО станции: второй конфликтующий адрес не создаётся.
+5. **Отправитель подключается.** Shairport Sync согласует ключи сопряжения, управляющий канал и параметры сеанса. В генерируемом конфиге нет пароля, поэтому штатное подключение не требует PIN на экране.
+6. **Приходят аудиоданные.** Приёмник декодирует их в PCM — последовательность звуковых отсчётов — и передаёт в общий ALSA-микшер. Микшер объединяет этот звук с Алисой и выводит результат в динамики.
 
-## Verification boundaries
+Профили прямого ALSA используют 48 кГц, 16 бит, стерео. Миди идёт через FIFO (канал между процессами) и штатный `aplay` с 44,1 кГц. Причина — несовместимость пакетной ALSA с его штатным общим микшером; системный `aplay` использует библиотеку прошивки. [Подробнее о Миди](MIDI.md).
 
-1.3.2 owner confirmed both playing and distinct icons. Initial1.4.0 unified-runtime
-build passed lifecycle/crash/HAP/PTP on both; owner confirmed Mini audio/Alice.
-Fresh results for the final dependency rebuild are reported in PR#2. Baseline
-331-second continuous playback is evidence for1.3.1, not every subsequent build.
+## Что делает каждый компонент
 
-**Known issue remains:** this owner's iPhone may take20–25s to reconnect; earlier
-connection errors/disappearance have no established root cause. Jailbreak/tweak
-involvement is unproven. No reconnection fix is claimed by size optimization.
-Lossless/surround,24-bit DAC output, Light2/Midi hardware and full reboot after
-this upgrade are unverified. Pyatv HAP/PTP setup alone is not an audio test.
+| Компонент | Назначение | Почему нужен |
+|---|---|---|
+| Go-супервизор | Профиль модели, запуск/остановка, настройка и управление | У моделей различаются PCM, библиотеки, экран и кнопки. |
+| Shairport Sync **5.6.2** | AirPlay 2, сопряжение, декодирование и аудиовыход | Go-программа не реализует заново приём протокола. |
+| FFmpeg **7.1.3** | Декодеры выбранных аудиоформатов | Приходит с приёмником, отдельная установка программы `ffmpeg` на колонке не нужна. |
+| NQPTP **1.2.9 / smi11** | Согласование часов PTP | Приёмник может назначать момент воспроизведения по общему времени. |
+| Avahi **0.7** | Объявления mDNS/Bonjour | Телефон находит приёмник без ручного IP. |
+| D-Bus | Локальная связь с Avahi и control-enabled приёмником | Shared-управление отправляет команды через интерфейс Shairport Sync. |
+| Luna | Runtime API, речь, громкость и жизненный цикл плагина | Передаёт плагину данные и разрешения устройства. |
+| YAM | Установка и обновление файлов пакета | Не заменяет Luna как runtime-хост речи и индикации. |
+
+## Почему Алиса продолжает работать
+
+Shared-профиль открывает общий PCM прошивки вместо эксклюзивного выхода `hw:0,0`. Штатный плеер и AirPlay попадают в один микшер, поэтому приёмник не должен останавливать Алису для воспроизведения.
+
+При включённом `ducking` события речи временно уменьшают только AirPlay-поток. При включённом `native_player` плагин ставит на паузу штатную **музыку**, которая могла запуститься после голосовой команды; речевой ответ Алисы продолжает звучать.
+
+Индикация зависит от режима. Shared-управление использует API Luna; Станция 2 имеет отдельный backend для проверенной геометрии framebuffer `89×1`. Старый визуализатор Лайт 2/Миди читает копию PCM через FIFO и рисует часы/спектр. Поэтому отсутствие FIFO в обычном shared-профиле не означает потерю звука.
+
+## Остановка и восстановление
+
+На shared-пути супервизор владеет дочерними процессами. При остановке он завершает их в обратном порядке и освобождает свою индикацию. Дочерние процессы также получают сигнал при смерти родителя.
+
+Если принадлежащий ему дочерний процесс падает, shared-путь повторяет запуск с интервалом 3 секунды, до пяти повторов. Ошибка предварительной проверки не становится бесконечным перезапуском. После исчерпания попыток смотрите лог упавшего процесса и состояние службы в Luna.
+
+Логи shared-runtime хранятся в `/run/station-airplay/` и ограничены 128 КиБ на процесс. Runtime-токены Luna/YAM остаются у супервизора и удаляются из окружения аудиопроцессов.
+
+## Мультирум и границы проверки
+
+Группу создаёт отправитель AirPlay 2. Приёмники используют Shairport Sync и NQPTP; отдельный групповой режим звука в JSON не нужен. Объект `group` относится только к дополнительному мосту громкости.
+
+Иконки HomePod задаются `general.model` и совпадают в Bonjour и `/info`. Они не подтверждают воспроизведение, поддержку Siri, lossless, surround или 24-битный выход DAC. Прямой ALSA-профиль здесь настроен на S16_LE; дополнительные форматы нельзя обещать только по возможностям upstream.
+
+Проверки относятся к конкретным пакетам и устройствам: [модели](SHARED_MODELS.md), [отчёты](validation/), [сборка](../source/BUILD.md). Слуховая оценка отсутствия эха не заменяет измерение синхронизации и длительного дрейфа.

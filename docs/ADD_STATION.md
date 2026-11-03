@@ -1,188 +1,124 @@
-# Add a station model
+# Добавление модели станции
 
-Agent runbook. One profile inside this plugin. Do not add a second supervisor, a per-model package id, or a private launcher script.
+Добавляйте модель в существующий плагин: один Go-супервизор, профиль аудио и подходящий receiver ABI. Новая запись в манифесте без проверки PCM и библиотек может пройти установку и остаться без звука.
 
-Policy, secrets, and the PR rules are in [CONTRIBUTE.md](../CONTRIBUTE.md). This file is the procedure. Copy the closest row in the table. Change a field only when a command on the target speaker proves the new value.
+Правила доступа к устройству и публикации: [CONTRIBUTE.md](../CONTRIBUTE.md). Здесь описана проверка технических условий.
 
-## Stop
+## 1. Определить модель и окружение
 
-- Do not put a model in `plugin.toml` until `yam device` prints that exact `model` string.
-- Do not write `device.toml` or pass `--model` so a different speaker looks like a supported one.
-- Do not stop Quasar, `maind`, or `mediad` to make the package look successful.
-- Do not open `hw:0,0` or any exclusive PCM when a shared mixer already accepts audio.
-- Do not invent `mdnsHostPrefix`. A wrong prefix leaves the process running and the phone empty.
-- Do not commit serials, tokens, Wi-Fi data, IPs, or full device logs.
-- Do not read `/sys/class/efuse` or `/sys/class/unifykeys`. On the Mini a plain read froze the speaker until a power cycle.
-- Do not add a receiver binary. `bin/shairport-sync-ap2` is ARMhf. `bin/shairport-sync-ap2-aarch64` is AArch64. Both are Shairport Sync 5.6.2. One ARMhf `bin/nqptp` serves both.
-
-## Paths already in the tree
-
-`run` in `source/profiles.go` selects the path:
-
-| Condition | Function | What it does |
-|---|---|---|
-| `pcm == ""` | `runPlum` | FIFO renderer. Midi sets `pipeOutput` and plays with system `aplay`. |
-| `pcm != ""` and `ui == false` | `runShared` | Direct ALSA to `pcm`. No clock, no LED. |
-| `pcm != ""` and `ui == true` | `runShared` | Same mixer, plus a PCM tee and the YAM clock/LED loop. |
-
-Shared profiles require `yam device` `architecture` `aarch64`. That is the kernel (and the arch `yamd` was built for). Userspace ABI is a separate field, `receiverABI`.
-
-| YAM model | `pcm` | `receiverABI` | `mdnsHostPrefix` | `ui` | AirPlay `model` |
-|---|---|---|---|---|---|
-| `yandexstation_2` | `plug:dmix_spk` | `armhf` | `yandex-station-gen2` | false | `AudioAccessory1,1` |
-| `yandexmicro` | `plug:dmix_spk` | `armhf` | `yandexmicro` | false | `AudioAccessory5,1` |
-| `yandexmini`, `YandexStationMini` | `softvol` | `armhf` | `yandexmini` | false | `AudioAccessory5,1` |
-| `yandexmini_3_pro` | `speakers` | `aarch64` | `Yandex-Station-Mini-3-Pro` | false | `AudioAccessory5,1` |
-| `bergamot` | `speakers` | `armhf` | `YandexMini3` | false | `AudioAccessory5,1` |
-| `yandexplum`, `plum` | `plug:dmix_spk` | `armhf` | `YandexLite-gen2` | true | `AudioAccessory5,1` |
-| `yandexmidi` | empty | | `yandex-station-midi` | `pipeOutput` | `AudioAccessory1,1` |
-
-The Mini also sets `alsaLib` (firmware ALSA is not in `/usr/lib`), `nvramHostID` (step 4) and `packagedDBus` (no `dbus-daemon` in the firmware). See [SHARED_MODELS.md](SHARED_MODELS.md).
-
-Compact speakers use `AudioAccessory5,1` (HomePod mini). Full-size stations use `AudioAccessory1,1` (HomePod). The string is `airplayModel` on the profile. It is copied into `general.model`.
-
-## 1. Read the speaker
-
-Run these. Record the outputs in the PR. Strip serials before committing.
+На станции с разрешённым доступом соберите модель из API хоста, прошивку, архитектуру и аудиоконфигурацию. Для старого клиента YAM:
 
 ```sh
 yam device
 yam ps
+```
+
+Для Luna смотрите `/api/device` и состояние плагинов в её интерфейсе. В SSH на самой станции:
+
+```sh
 id
 uname -m
 cat /system/vendor/quasar/version_full
 cat /proc/asound/cards
 cat /etc/asound.conf
-tr ' ' '\n' < /proc/cmdline | sed -n 's/^androidboot.serialno=//p'
 od -An -tx1 -N 20 /usr/lib/libasound.so.2
-od -An -tx1 -N 20 /usr/bin/dbus-daemon
-ps | grep -E 'maind|quasar_launcher' | grep -v grep
 ```
 
-From a computer on the same LAN:
+Файл ALSA может находиться в другом месте: у оригинального Мини это `/system/vendor/quasar/libs/libasound.so.2`, а действующая конфигурация может быть в `/tmp/alsa/asoundrc`. Не выгружайте все пользовательские конфиги для поиска одного значения.
+
+Проверьте ELF-class и machine штатной ALSA и инструментов через `readelf -h/-l/-d/-V`. AArch64 в `uname -m` — архитектура ядра; userspace может быть ARMhf.
+
+| ELF-class / machine | Receiver | Что требуется |
+|---|---|---|
+| 32-bit / ARM (`01`, `28 00` в заголовке) | `bin/shairport-sync-ap2` | ARMhf-загрузчик и совместимая штатная ALSA |
+| 64-bit / AArch64 (`02`, `b7 00`) | `bin/shairport-sync-ap2-aarch64` | Штатные AArch64-библиотеки; shared-controls отдельно не квалифицированы |
+
+Не подменяйте model ID в `device.toml` и не расширяйте allowlist догадками. Не читайте `/sys/class/efuse` и `/sys/class/unifykeys`: на Мини даже чтение приводило к зависанию до отключения питания.
+
+## 2. Подтвердить общий аудиовыход
+
+Оставьте Quasar/`maind`/`mediad` работающими. Возьмите имя PCM из реальной конфигурации ALSA и проверьте секунду тишины, заменив пример `plug:dmix_spk` на найденное имя:
+
+```sh
+dd if=/dev/zero bs=192000 count=1 | \
+  aplay -D 'plug:dmix_spk' -f S16_LE -r 48000 -c 2 -t raw
+printf 'APLAY:%s\n' "$?"
+```
+
+Нулевой код означает только успешную запись отсчётов. Затем проверьте библиотечное окружение приёмника: системный `aplay` может иметь пути Quasar, которых у приёмника нет.
+
+| Результат | Следующее действие |
+|---|---|
+| Общий PCM работает и в окружении receiver | Задайте `pcm`, `quasarCoexist: true`; начните без индикации. |
+| Работает только системный `aplay` | Исследуйте ABI и загрузчик; при доказанной несовместимости используйте FIFO-путь по образцу Миди. |
+| Общего PCM нет | Остановите адаптацию и согласуйте иной режим. Эксклюзивный `hw:0,0` может лишить Алису звука. |
+
+Прямые профили рассчитаны на 48 кГц/S16_LE/стерео. Успех старого receiver на 44,1 кГц не подтверждает тот же контракт нового. На Мини `plug:` проходит с системным `aplay`, но не с приёмником из-за конвертера libsamplerate; его профиль открывает `softvol` напрямую.
+
+## 3. Подтвердить имя mDNS
+
+С Mac в той же сети:
 
 ```sh
 dns-sd -B _yandexio._tcp local.
-dns-sd -L '<instance from the browse>' _yandexio._tcp local.
 ```
 
-ELF byte 4 is the class. Bytes 18–19 little-endian are the machine.
-
-| class | machine | `receiverABI` | Receiver |
-|---|---|---|---|
-| `01` | `28 00` | `armhf` | `shairport-sync-ap2`, preload `/usr/lib/libasound.so.2` |
-| `02` | `b7 00` | `aarch64` | `shairport-sync-ap2-aarch64`, library path `lib/aarch64:/usr/lib:/lib` |
-
-`uname -m` `aarch64` with class `01` is the Station 2 / Light / Light 2 case: AArch64 kernel, ARMhf userspace. Use `armhf`. Do not build a new AArch64 receiver for that.
-
-## 2. Prove the mixer
-
-Leave `maind --mediad` running. One second of silence:
+Возьмите имя из списка и разрешите сервис:
 
 ```sh
-dd if=/dev/zero bs=192000 count=1 | aplay -D '<candidate>' -f S16_LE -r 48000 -c 2 -t raw
-echo $?
+dns-sd -L 'точное имя из списка' _yandexio._tcp local.
 ```
 
-Candidates, in order: the `pcm.` name in `/etc/asound.conf` that is `type plug` onto a `type dmix` (`plug:dmix_spk`, `dmix_spk_plug`), then `speakers` if that PCM is a softvol or plug onto the same dmix. Use the first name that prints `APLAY:0` while `mediad` is still in `ps`.
+Сравните объявленный hostname с `mdnsHostPrefix` и источником ID профиля. Обычная схема — префикс плюс boot serial. У Мини — `yandexmini-<mv_uuid>` из Linkplay-конфигурации. Серийный номер и `mv_uuid` не публикуйте.
 
-| Result | Profile |
+Avahi должен добавлять сервисы к уже существующему hostname, с `publish-addresses=no`. Неверный префикс вызывает конфликт имён; второй независимый announcer не исправляет профиль. Текущий generated-конфиг ограничен `wlan0`: другую сеть включайте только после подтверждения интерфейса и причины сбоя.
+
+## 4. Выбрать путь и индикацию
+
+| Условие профиля | Что запускается | Ограничение |
+|---|---|---|
+| `pcm` задан, `ui: false` | Прямой shared ALSA | Для аудио часы и LED не обязательны. |
+| `pcm` задан, `ui: true` | Shared ALSA плюс копия PCM для старого renderer | Нужны проверенная геометрия часов/кольца и API; не совмещать с shared-controls. |
+| `pcm` пуст, `pipeOutput: true` | Прежний путь Миди с FIFO/aplay | Shared-controls не запускаются. |
+
+Для нового устройства начните с `ui: false`. Shared-controls включайте отдельной проверкой: рабочий звук не подтверждает D-Bus transport, речь, громкость или кнопку.
+
+Старый `ui` требует объявленных `display.clock.segment.v1`, `led.ring.rgb`, `led.ring.<N>` и точной раскладки сегментов. На Лайт 2 цифры `0..3` и `DH`/`DL`; Миди использует цифры `1..4`. Не угадывайте геометрию по названию модели.
+
+## 5. Добавить профиль и тесты
+
+До изменения реализации добавьте тесты поведения: точный выбор модели, отказ неизвестной модели, ABI, PCM, частота, hostname и отсутствие утечки runtime-токена. Затем измените таблицу `profiles` в `source/service.go` и при необходимости запуск в `source/profiles.go`.
+
+| Поле | Откуда брать |
 |---|---|
-| Exit 0 | `pcm` is that name, `quasarCoexist: true`, `ui: false` unless step 3 applies. |
-| Exit not 0, and `aplay -D speakers` works only with system `aplay` | `pcm` empty, `pipeOutput: true`, same pattern as Midi. Document why firmware `libasound` cannot join the dmix. |
-| No shared PCM exists | Stop. Exclusive `hw:` playback drops Alice. Do it only after the owner asks for audio-only mode, and set `quasarCoexist: false`. |
+| `models` | Точный model ID из API и реально используемые алиасы |
+| `name` | Читаемое имя приёмника без личных констант |
+| `pcm`, `alsaLib`, `receiverABI` | Проверка микшера и ELF/loader |
+| `mdnsHostPrefix`, `nvramHostID` | Фактическое штатное mDNS-объявление |
+| `packagedDBus` | Наличие штатных daemon/send на прошивке |
+| `airplayModel` | Согласованное представление в AirPlay: `AudioAccessory5,1` для компактных, `AudioAccessory1,1` для полноразмерных моделей |
 
-System `aplay` runs with the firmware library path; the receiver does not. Repeat the probe behind the packaged loader before trusting it: `<pkg>/lib/ld-linux-armhf.so.3 --library-path <pkg>/lib --preload <firmware libasound.so.2> <aplay or a small ALSA client>`. On the Mini every `plug:` PCM passed with system `aplay` and failed in the receiver (`Unable to set hw parameters ... No such file or directory`, a libsamplerate converter that only Quasar's path resolves); `softvol` works. If `/usr/lib/libasound.so.2` does not exist, find the firmware library in `/proc/<mediad pid>/maps` and set `alsaLib`.
+Готовые профили: [SHARED_MODELS.md](SHARED_MODELS.md). Используйте существующий receiver для нужной ABI. Измените allowlist соответствующего манифеста/пакета, тесты пакета и документацию; версия в `plugin.toml` и `source/service.go` должна совпадать, если изменение требует выпуска новой версии.
 
-44.1 kHz is not a substitute. These mixers are 48 kHz. `receiverConfig` already sets `output_rate = 48000` and `S16_LE`.
+Тестовые образцы: `TestSharedProfilesKeepProvenAudioContract`, `TestLight2SharesMixerAndHoldsDisplay`, `TestStockMDNSHostname` и `tests/test_package.py`. Для прямого PCM проверяйте отсутствие неожиданного `hw:0,0` или `spk_tee`.
 
-## 3. Clock and LEDs
+## 6. Собрать и установить
 
-Set `ui: true` only when all of these are true:
+Следуйте [BUILD.md](../source/BUILD.md). Выполните Go-тесты/vet на Linux, проверки миграции и пакета. Кросс-компиляция тестового бинарника на macOS не означает выполнение тестов.
 
-- `yam device` features include `display.clock.segment.v1`, `led.ring.rgb`, and `led.ring.<N>`.
-- The digit layout is known. Plum digits are `0..3` with colon `DH`,`DL` (`digitBase` 0). Midi digits are `1..4` (`digitBase` 1) and stay on the pipe path.
-- The owner wants the plugin to hold the display while the service runs.
+Установите результат средствами нужной версии YAM. Сначала остановите прежний экземпляр и дождитесь исчезновения его дочерних процессов, затем устанавливайте и включайте новый. Команды legacy-YAM и Luna v2 различаются: [INSTALLATION.md](INSTALLATION.md).
 
-`ui: true` writes `~/.asoundrc` (`uiAsound`) that tees `spk_tee` to the FIFO and to `pcm`. Shairport's device is `spk_tee`. The shared mixer name stays in the asound file, not in `output_device`. YAM takes the clock on the first `/clock` write and detaches Alice's ring trigger on the first `/led` write. `clockOff` on process exit restores Alice's saved clock frame. Do not open `/sys/class/leds` from this process.
+## 7. Принять результат на колонке
 
-If the speaker has no confirmed clock, leave `ui: false`. Missing LEDs must not block audio.
+Проверьте [сценарии владельца](CHECK_ON_YOUR_SPEAKER.md), а также:
 
-## 4. Hostname
+- один супервизор, один receiver, один NQPTP; штатная Алиса продолжает работать;
+- mDNS с другого устройства, достижимый hostname, затем реальная музыка;
+- stop/disable завершают принадлежащие плагину процессы и освобождают порты;
+- повторное включение восстанавливает обнаружение и звук;
+- новый runtime не меняет защищённые конфиги и не требует старого личного launcher;
+- мультирум, кнопки, экран и холодная загрузка отмечены отдельно как проверенные или непроверенные.
 
-`dns-sd -L` prints `can be reached at <host>.local`. `<host>` must equal `mdnsHostPrefix + "-" + androidboot.serialno`.
+При падении shared-дочернего процесса супервизор делает до пяти повторов. После исчерпания прочитайте лог конкретного процесса в `/run/station-airplay/`; не называйте это успешным восстановлением службы.
 
-`stockHostname` in `source/profiles.go` does that join. The serial is the alphanumeric `androidboot.serialno` value, not the Unix hostname and not the last four characters. If the browsed host does not match that join, do not guess another prefix.
-
-The Mini is the exception: its host is `yandexmini-<mv_uuid>`, the id the firmware `device_id` tool prints, from the Linkplay factory JSON `/vendor/new_nvram_config`. `nvramHostID` reads it from there. Use the same check: the joined value must equal the browsed host.
-
-`avahiConfig` then sets `host-name` to that string, `publish-addresses=no`, and `allow-interfaces=wlan0`. Do not publish a second A record. Do not change `allow-interfaces` unless the speaker's Wi-Fi interface is not `wlan0` and discovery failed because of it.
-
-## 5. Edit
-
-1. Add one `stationProfile` to the `profiles` slice in `source/service.go`. `models` contains the exact `yam device` model and any alias `yam` already emits. `name` is the string the phone shows.
-2. Add that model to `plugin.toml` `[compatibility].models`. Bump `version` there and the `version` constant in `source/service.go` to the same value.
-3. Extend tests:
-   - `TestSharedProfilesKeepProvenAudioContract` for `ui: false` (must contain `pcm`, icon, `port = 5000`, 48 kHz, stereo; must not contain `hw:0,0` or `spk_tee`).
-   - `TestLight2SharesMixerAndHoldsDisplay` is the pattern for `ui: true`: receiver device is `spk_tee`, `uiAsound` slaves to the shared PCM.
-   - `TestStockMDNSHostname` for the prefix.
-   - `tests/test_package.py` model set.
-4. Update the README model table, `CHANGELOG.md`, `docs/SHARED_MODELS.md`, and the icon table in `CONTRIBUTE.md`.
-
-Template, `ui: false`:
-
-```go
-{name: "Shown On Phone", models: []string{"exact-yam-model"}, pcm: "plug:dmix_spk", quasarCoexist: true, mdnsHostPrefix: "prefix-from-dns-sd", receiverABI: "armhf", airplayModel: "AudioAccessory5,1"}
-```
-
-`ui: true` also sets `leds`, `digitBase`, `colon`, and `ui: true`.
-
-Do not route a new model through `runPlum` unless `pcm` is empty. `runPlum` refuses to start while Quasar is running when `quasarCoexist` is false, and its default ALSA slave is `hw:0,0`.
-
-## 6. Build and install
-
-```sh
-cd source
-GOOS=linux GOARCH=arm GOARM=7 CGO_ENABLED=0 go test -c -o /tmp/station-airplay.test .
-GOOS=linux GOARCH=arm GOARM=7 CGO_ENABLED=0 go build -buildvcs=false -trimpath -ldflags='-s -w' -o ../bin/station-airplay .
-cd ..
-upx --best --lzma bin/station-airplay && upx -t bin/station-airplay
-python3 scripts/package.py
-python3 tests/test_package.py
-```
-
-`go test` on Darwin fails: `Pdeathsig` exists only for `GOOS=linux`. Compile the test binary as above and run it on the speaker, or run `go test ./...` on Linux. Pack the supervisor. `tests/test_package.py` rejects an unpacked archive over 10 MiB.
-
-Install the `.yap` from the computer. `dist/` is gitignored; do not commit it.
-
-```sh
-yam service stop station-airplay
-yam install dist/station-airplay-<version>.yap
-yam service start station-airplay
-yam ps
-yam logs station-airplay
-```
-
-`yam service restart` while the old process is still exiting can delete the new runtime token. The log then says `invalid runtime token` and the package stops. Stop, confirm `ps` has no `station-airplay`, then start.
-
-## 7. Done only when all of these are true
-
-- `yam ps` shows one `station-airplay` row, `running`, and the new version.
-- Log contains `model=<id> protocol=AirPlay2 pcm=<pcm> Alice=shared`.
-- `ps` on the speaker shows one supervisor, one `dbus-daemon` on `/run/station-airplay/private-bus`, one `avahi-daemon`, one `nqptp`, one `shairport-sync-ap2`, and `maind --mediad` still present.
-- Avahi log says `Host name is <prefix>-<serial>.local` with no `-2` suffix.
-- A computer on the LAN sees `_airplay._tcp` under `name`, on port 5000, at that same host.
-- The owner hears audio from a phone. `aplay` exit 0 is not that check.
-- With `ui: true`, clock segments for the current time are non-zero and the ring trigger is `[none]` while the service runs. After `yam service stop`, the clock returns to Alice.
-- `yam service stop` leaves no `shairport`, `nqptp`, or plugin `avahi` process.
-
-## Failures
-
-| Symptom | Look at |
-|---|---|
-| Package running, phone sees nothing | Avahi host differs from the `_yandexio` host, or the log says `Host name conflict`. |
-| `invalid runtime token` right after restart | Stop, wait until the process is gone, start again. |
-| `Quasar/Alice is running and may own ALSA` | Profile took `runPlum` with `quasarCoexist` false. Shared models must set `pcm`. |
-| `snd_interval_empty` or `Exec format error` | Receiver opened `hw:0,0` or loaded the wrong-ABI `libasound`. Armhf shared launch must preload `/usr/lib/libasound.so.2`. |
-| Supervisor exits after five restarts | A child is crashing. Read `/run/station-airplay/shairport-sync.log`. YAM does not restart a dead supervisor. |
-| Clock or ring never moves | `ui` is false, or `yam device` lacks `display.clock.segment.v1` / `led.ring.<N>`. |
+В PR приведите точную модель, прошивку, шаги воспроизведения, тесты и аппаратные результаты. Не публикуйте приватные библиотеки, полный sysroot, логи с токенами и личные пути. [Правила PR](../CONTRIBUTE.md).
