@@ -1,30 +1,30 @@
-# Global YAM rooms and AirPlay names
+# Имя комнаты в AirPlay
 
-A room belongs to the device in YAM, not to the AirPlay package. With the companion
-YAM room-metadata change, users can assign any room after installing YAM:
+Плагин может добавить комнату к имени приёмника. Он читает поле `room` из ответа runtime API `/device` при запуске: например, `Yandex Mini 2 AirPlay` превращается в `Yandex Mini 2 AirPlay (Кухня)`.
+
+Комната относится к устройству в YAM/Luna, а не к настройкам AirPlay. Она не меняет модель, аудиовыход или возможности экрана.
+
+## Когда имя меняется
+
+| Условие | Действие плагина | Результат |
+|---|---|---|
+| Хост передал непустое `room`, выбран shared-профиль | Добавляет комнату в скобках | В AirPlay видно модель и комнату |
+| Поля нет, оно `null` или пустое | Оставляет имя профиля | Старый хост продолжает работать без комнаты |
+| Имя слишком длинное | Сокращает отображаемую строку до 50 байт по границе UTF-8 | Имя помещается в DNS-объявление; исходная комната в хосте не меняется |
+| Комната изменилась во время работы | Текущий процесс не перечитывает её | Новое имя появится после перезапуска плагина |
+
+Перезапуск прерывает поток. Меняйте комнату до начала прослушивания или перезапустите плагин после завершения музыки.
+
+## Как задать комнату
+
+Используйте поле комнаты в интерфейсе вашего хоста, если оно поддерживается. В совместимом расширении YAM предусмотрены:
 
 ```sh
-yam room "Kitchen"
+yam room 'Кухня'
 yam room
 yam room --clear
 ```
 
-The YAM UI has a room input. External management uses `GET/PUT /api/room`, for
-example `{"room":"Kitchen"}`; `GET /api/device` and the authenticated binary
-runtime `/device` expose the same optional `room` field. Lua sees `device.room`.
-The companion change stores it atomically in YAM's data directory, outside plugin
-files. It does not modify the hardware model, LED capabilities or audio routing.
-This API is a proposed YAM extension, **not an existing feature of stock0.1.17**.
+Это команды расширения room-metadata, а не обещание для любой версии YAM. В штатном YAM 0.1.17 этого API нет; перед запуском проверьте `yam room --help`. Расширение также предусматривает `GET/PUT /api/room` и передачу комнаты через `/api/device` и runtime `/device`.
 
-Shared AirPlay profiles read that field on service startup. For example,
-`Yandex Mini 2 AirPlay` becomes `Yandex Mini 2 AirPlay (Kitchen)`.
-Old YAM without the field or with null/blank room keeps the original name.
-Long labels are shortened at a UTF-8 boundary only for DNS display (50-byte
-receiver name leaves room for RAOP's MAC prefix); YAM retains the full label.
-Control characters/invalid UTF-8 are rejected. Room does not select a model.
-
-Set room before enabling AirPlay, or normally restart the AirPlay service after
-changing it. A restart interrupts the current stream; metadata changes do not
-silently restart plugins. The legacy Plum/Midi UI path is otherwise unchanged.
-Do not copy private hardware overrides or add per-home room constants to a build.
-No dedicated room database, second AirPlay daemon or cloud service is needed.
+Если хост не отдаёт `room`, добавление поля в `airplay-controls.json` не поможет: неизвестный ключ остановит чтение конфигурации. Старый FIFO-путь Миди не использует shared-переименование.
