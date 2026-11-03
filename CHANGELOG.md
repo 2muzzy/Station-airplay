@@ -1,3 +1,17 @@
+## 2.0.3
+
+- The install hook detaches its worker with `setsid`. YAM ends the postinstall
+  in its own process group, and a plain `( ... ) &` child died with it: the
+  package was installed, the plugin stayed disabled. Reproduced on a live
+  speaker — a `setsid` worker survives the session, a plain child does not.
+- The worker retries for about 20 minutes and reports success only after the
+  receiver process is actually up. If Luna never answers it says so
+  instead of claiming the enable was saved.
+- README documents multiroom with the 2026-10-27 four-speaker acceptance and
+  its limits, and states that the group volume bridge is deliberately off.
+- Registry publishing validates every target before uploading anything, so a
+  target the registry rejects can no longer leave a half-published version.
+
 ## 2.0.2
 
 - The install hook no longer waits for Luna while YAM holds the transaction
