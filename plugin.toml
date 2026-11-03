@@ -1,8 +1,8 @@
 id = "station-airplay"
 name = "Station airplay"
-version = "2.0.3"
+version = "2.0.4"
 entry = "bin/station-airplay"
-description = "AirPlay 2 receiver: Light 2, Lite, Midi, Station 2, Mini, Mini 2, Mini 3 and Mini 3 Pro; shared audio with Alice; optional voice, sender transport, native volume and indication."
+description = "AirPlay 2 для Яндекс Станций: общий звук с Алисой, голосовое управление и кнопка Алисы (пауза/продолжить), громкость синхронно с телефоном в обе стороны, мультирум, индикация и часы"
 permissions = ["exec", "clock", "led", "ipc.speech", "commands"]
 
 [launch]
