@@ -12,6 +12,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -115,22 +116,58 @@ type indicationStation interface {
 func validDB(v float64) bool {
 	return !math.IsNaN(v) && !math.IsInf(v, 0) && (v == -144 || v >= -30 && v <= 0)
 }
+
+// The station's percent scale is roughly linear in acoustic output, while the
+// AirPlay sender's slider arrives as attenuation in dB. Mapping dB linearly to
+// percent made the middle of the sender slider much quieter than the same
+// position on the station. This curve lifts the middle while keeping both
+// endpoints, and 10% quantization matches the station's own step.
+const (
+	volumeCurveExponent = 0.8
+	volumeStepPercent   = 10
+)
+
+func quantizeVolumePercent(percent int) int {
+	if percent <= 0 {
+		return 0
+	}
+	step := int(math.Round(float64(percent)/volumeStepPercent)) * volumeStepPercent
+	if step < 0 {
+		step = 0
+	}
+	if step > 100 {
+		step = 100
+	}
+	return step
+}
+
 func dbPercent(v float64) int {
 	if v == -144 {
 		return 0
 	}
-	return int(math.Round((v + 30) * 100 / 30))
+	x := (v + 30) / 30
+	if x < 0 {
+		x = 0
+	}
+	if x > 1 {
+		x = 1
+	}
+	return quantizeVolumePercent(int(math.Round(100 * math.Pow(x, volumeCurveExponent))))
 }
 func percentDB(v int) float64 {
-	if v == 0 {
+	if v <= 0 {
 		return -144
 	}
-	return float64(v)*30/100 - 30
+	x := math.Pow(float64(v)/100, 1/volumeCurveExponent)
+	return x*30 - 30
 }
 func nativePercent(v float64) (int, error) {
 	if math.IsNaN(v) || math.IsInf(v, 0) || v < 0 || v > 100 {
 		return 0, errors.New("invalid native volume")
 	}
+	// Station observations stay on the native 5% grid and are not rounded to
+	// the sender step: publishing an observed 25% as 30% would raise the
+	// station by one step on every session handoff.
 	return int(math.Round(v/5)) * 5, nil
 }
 
@@ -166,6 +203,10 @@ type sharedController struct {
 	buttonPauseUntil            time.Time
 	buttonCadence               time.Duration
 	buttonSupp                  *buttonSuppression
+	// buttonSession gates the Luna Alice long-poll. Without a live sender the
+	// stock firmware owns the button, and polling would only burn CPU on a
+	// small device while competing with the vendor stack.
+	buttonSession atomic.Bool
 }
 
 func (c *sharedController) speech(ctx context.Context, e speechEvent, now time.Time) error {
@@ -433,12 +474,14 @@ func (c *sharedController) stopButtonSuppression() {
 func (c *sharedController) tick(ctx context.Context, now time.Time) error {
 	s, err := c.receiver.State(ctx)
 	if err != nil {
+		c.buttonSession.Store(false)
 		c.volumeReady = false
 		c.ledOwned = false
 		c.ledState = ""
 		c.ledSuspended = true
 		return err
 	}
+	c.buttonSession.Store(s.Client != "" && s.Available)
 	if !validDB(s.DB) {
 		return errors.New("invalid AirPlay volume")
 	}
@@ -605,6 +648,12 @@ func (c *sharedController) releaseNative() {
 }
 
 func (c *sharedController) syncVolume(ctx context.Context, s receiverState, now time.Time) error {
+	// A known new sender level wins after initial handoff. SetVolume still
+	// performs the backend's guarded write and readback; avoid only the
+	// redundant native read before that operation in the same tick budget.
+	if c.volumeReady && !c.remotePending && s.Available && s.Client != "" && validDB(s.DB) && math.Abs(s.DB-c.lastDB) > 0.01 {
+		return c.applySenderVolume(ctx, s, now)
+	}
 	v, err := c.station.GetVolume(ctx)
 	if err != nil {
 		c.volumeReady = false
@@ -657,19 +706,7 @@ func (c *sharedController) syncVolume(ctx context.Context, s receiverState, now 
 		c.pendingNative = -1
 		c.volumeReady = true
 	} else if math.Abs(s.DB-c.lastDB) > 0.01 {
-		actual, err := c.station.SetVolume(ctx, dbPercent(s.DB))
-		if err != nil {
-			c.volumeReady = false
-			return err
-		}
-		c.lastNative, err = nativePercent(actual)
-		if err != nil {
-			c.volumeReady = false
-			return err
-		}
-		c.lastDB = s.DB
-		c.pendingNative = -1
-		c.ledQuietUntil = now.Add(3 * time.Second)
+		return c.applySenderVolume(ctx, s, now)
 	} else if native != c.lastNative && !now.Before(c.duckUntil) {
 		// Two stable observations suppress native transition/quantisation noise.
 		if c.pendingNative == native {
@@ -696,6 +733,24 @@ func (c *sharedController) syncVolume(ctx context.Context, s receiverState, now 
 	} else {
 		c.pendingNative = -1
 	}
+	return nil
+}
+
+func (c *sharedController) applySenderVolume(ctx context.Context, s receiverState, now time.Time) error {
+	actual, err := c.station.SetVolume(ctx, dbPercent(s.DB))
+	if err != nil {
+		c.volumeReady = false
+		return err
+	}
+	native, err := nativePercent(actual)
+	if err != nil {
+		c.volumeReady = false
+		return err
+	}
+	c.lastNative = native
+	c.lastDB = s.DB
+	c.pendingNative = -1
+	c.ledQuietUntil = now.Add(3 * time.Second)
 	return nil
 }
 

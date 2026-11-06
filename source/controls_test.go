@@ -181,8 +181,8 @@ func TestControlVolumePhoneNativeQuantisationNoFeedback(t *testing.T) {
 		t.Fatal("startup changed volume")
 	}
 	r.s.DB = -10
-	_ = c.tick(ctx, now.Add(time.Second)) // 67 -> native65
-	if len(s.sets) != 1 || s.v != 65 {
+	_ = c.tick(ctx, now.Add(time.Second)) // curve -> native70
+	if len(s.sets) != 1 || s.v != 70 {
 		t.Fatal(s.sets, s.v)
 	}
 	_ = c.tick(ctx, now.Add(2*time.Second))
@@ -196,14 +196,14 @@ func TestControlVolumePhoneNativeQuantisationNoFeedback(t *testing.T) {
 		t.Fatal("unstable native update sent")
 	}
 	_ = c.tick(ctx, now.Add(5*time.Second))
-	if len(r.volumes) != 1 || r.volumes[0] != -6 {
+	if len(r.volumes) != 1 || r.volumes[0] != percentDB(80) {
 		t.Fatal(r.volumes)
 	}
 	_ = c.tick(ctx, now.Add(5500*time.Millisecond))
 	if len(s.sets) != 1 {
 		t.Fatal("old sender value overwrote pending native request")
 	}
-	r.s.DB = -6
+	r.s.DB = percentDB(80)
 	_ = c.tick(ctx, now.Add(6*time.Second))
 	if len(r.volumes) != 1 || len(s.sets) != 1 {
 		t.Fatal("echo loop")
