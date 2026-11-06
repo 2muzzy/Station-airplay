@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -107,14 +106,19 @@ func runWithControls(ctx context.Context, sharedAudio bool, controls *controlsCo
 		return fmt.Errorf("unsupported YAM model %q", d.Model)
 	}
 	// A model whose control profile is not qualified still has to play audio:
-	// the original Mini, Midi, Station 3 and Mini 3 have no validated D-Bus
+	// the original Mini, Station 3 and Mini 3 have no validated D-Bus
 	// transport, and refusing to start left them with a dead plugin.
 	if err = validateControlRenderer(p, controls); err != nil {
 		fmt.Fprintf(os.Stderr, "station-airplay: shared controls disabled: %v\n", err)
 		controls = nil
 	}
 	if p.pcm == "" {
-		return runPlum(ctx)
+		if controls != nil {
+			if err = controlsPreflight(ctx, api, d, controls); err != nil {
+				return err
+			}
+		}
+		return runPlumWithControls(ctx, controls)
 	}
 	p, err = profileWithRoom(p, d.Room)
 	if err != nil {
@@ -141,6 +145,9 @@ func validateControlRenderer(p stationProfile, controls *controlsConfig) error {
 		return errors.New("shared controls on clock-equipped Light 2 require --shared-audio; upstream display mode cannot own the same UI")
 	}
 	if p.pcm == "" {
+		if p.name == "midi" && p.pipeOutput {
+			return nil // FIFO audio and one legacy renderer, observed by controls.
+		}
 		return errors.New("shared controls are not enabled for legacy Plum/Midi renderer")
 	}
 	if p.receiverABI == "aarch64" {
@@ -415,28 +422,7 @@ func serveSharedControls(ctx context.Context, p stationProfile, api *yamAPI, d y
 	if err = os.WriteFile(conf, []byte(config), 0600); err != nil {
 		return err
 	}
-	bus := filepath.Join(state, "private-bus")
-	// A private bus and mount namespace preserve the system D-Bus and read-only root.
-	for _, file := range []struct{ name, addition string }{
-		{"passwd", "avahi:x:70:70:Avahi mDNS:/run/station-airplay:/bin/false\n"},
-		{"group", "avahi:x:70:\n"},
-	} {
-		b, e := os.ReadFile("/etc/" + file.name)
-		if e != nil {
-			return e
-		}
-		if !strings.Contains("\n"+string(b), "\navahi:") {
-			b = append(b, []byte("\n"+file.addition)...)
-		}
-		if err = os.WriteFile(filepath.Join(state, file.name), b, 0600); err != nil {
-			return err
-		}
-	}
-	busConf := fmt.Sprintf(`<busconfig><type>system</type><listen>unix:path=%s</listen><auth>EXTERNAL</auth><policy user="root"><allow own="*"/><allow send_destination="*"/><allow receive_sender="*"/></policy></busconfig>`, bus)
-	if err = os.WriteFile(filepath.Join(state, "bus.conf"), []byte(busConf), 0600); err != nil {
-		return err
-	}
-	avahiConf, err := avahiConfig(root, state, p)
+	bus, err := preparePrivateMDNS(state, "/etc")
 	if err != nil {
 		return err
 	}
@@ -473,49 +459,14 @@ func serveSharedControls(ctx context.Context, p stationProfile, api *yamAPI, d y
 		}()
 		return nil
 	}
-	dbusBin, dbusArgs := dbusCommand(root, p, "dbus-daemon")
-	if err = launch("dbus-daemon", dbusBin, append(dbusArgs, "--config-file="+filepath.Join(state, "bus.conf"), "--nofork")...); err != nil {
+	if err = startPrivateMDNS(ctx, root, state, p, env, launch, exits); err != nil {
 		return err
 	}
 	ready := func(stage string, check func(context.Context) error) error {
 		return waitSharedStartup(ctx, stage, sharedStartupTimeout, sharedStartupInterval, exits, check)
 	}
-	if err = ready("private D-Bus socket", func(context.Context) error {
-		fi, e := os.Stat(bus)
-		if e != nil {
-			return e
-		}
-		if fi.Mode()&os.ModeSocket == 0 {
-			return errors.New("private bus path is not a socket")
-		}
-		return nil
-	}); err != nil {
-		return err
-	}
 	ld32 := filepath.Join(root, "lib/ld-linux-armhf.so.3")
 	libs := filepath.Join(root, "lib")
-	if err = launch("avahi-namespace", ld32, "--library-path", libs, filepath.Join(root, "bin/avahi-namespace"), state,
-		ld32, "--library-path", libs, filepath.Join(root, "bin/avahi-daemon"),
-		"-f", avahiConf, "--no-drop-root", "--no-chroot", "--no-rlimits", "--no-proc-title"); err != nil {
-		return err
-	}
-	if err = ready("private Avahi D-Bus registration", func(parent context.Context) error {
-		checkCtx, cancel := context.WithTimeout(parent, 3*time.Second)
-		defer cancel()
-		sendBin, sendArgs := dbusCommand(root, p, "dbus-send")
-		c := exec.CommandContext(checkCtx, sendBin, append(sendArgs, "--system", "--print-reply", "--dest=org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus.NameHasOwner", "string:org.freedesktop.Avahi")...)
-		c.Env = env
-		b, e := c.CombinedOutput()
-		if e != nil {
-			return fmt.Errorf("Avahi NameHasOwner: %w: %.1024s", e, b)
-		}
-		if !strings.Contains(string(b), "boolean true") {
-			return errors.New("Avahi has not acquired its D-Bus name")
-		}
-		return nil
-	}); err != nil {
-		return err
-	}
 	launchAP2 := func(name string, args ...string) error {
 		loader, paths, binary := ld32, libs, name
 		var preload []string

@@ -101,3 +101,38 @@ func TestSenderVolumeIsForwardedOnce(t *testing.T) {
 		t.Fatal("accepted NaN")
 	}
 }
+
+func TestUnchangedNativeVolumeDoesNotKeepMidiSessionAlive(t *testing.T) {
+	now := time.Now()
+	s := &airplayState{status: "stopped"}
+	s.showVolume(30, now)
+	for i := 1; i <= 5; i++ {
+		s.showVolume(30, now.Add(time.Duration(i)*time.Second))
+	}
+	if s.inSession(now.Add(5 * time.Second)) {
+		t.Fatal("unchanged volume polling kept the disconnected renderer alive")
+	}
+	s.showVolume(45, now.Add(6*time.Second))
+	if !s.inSession(now.Add(6*time.Second)) || s.volume != 45 {
+		t.Fatal("real volume change did not show an overlay")
+	}
+}
+
+func TestMidiPipeRendererReleasesStalePlaybackMetadata(t *testing.T) {
+	now := time.Now()
+	for _, status := range []string{"playing", "paused"} {
+		s := &airplayState{status: status, lastAudio: now.Add(-3 * time.Second)}
+		if s.pipeUIActive(now) {
+			t.Fatalf("stale %s metadata retained the display", status)
+		}
+		s.lastAudio = now
+		if !s.pipeUIActive(now) {
+			t.Fatal("actual PCM did not activate the renderer")
+		}
+		s.lastAudio = now.Add(-3 * time.Second)
+		s.showVolume(40, now)
+		if !s.pipeUIActive(now) || s.pipeUIActive(now.Add(2*time.Second)) {
+			t.Fatal("volume overlay did not remain bounded")
+		}
+	}
+}

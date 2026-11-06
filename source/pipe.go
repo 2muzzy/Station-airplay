@@ -45,6 +45,7 @@ func playPipe(env []string) (*child, <-chan []byte, error) {
 	vis := make(chan []byte, 64)
 	go func() {
 		defer fifo.Close()
+		defer in.Close()
 		buf := make([]byte, 16384)
 		for {
 			n, e := fifo.Read(buf)
@@ -61,5 +62,8 @@ func playPipe(env []string) (*child, <-chan []byte, error) {
 			}
 		}
 	}()
-	return &child{name: "aplay", cmd: cmd}, vis, nil
+	return &child{name: "aplay", cmd: cmd, done: make(chan struct{}), stopInput: func() {
+		_ = in.Close()
+		_ = fifo.Close()
+	}}, vis, nil
 }

@@ -230,7 +230,7 @@ func TestControlsDoNotSilentlyLoseTheirLoopToUpstreamDisplay(t *testing.T) {
 			t.Fatal(model, err)
 		}
 	}
-	for _, model := range []string{"yandexmidi", "yandexmini_3_pro", "yandexmini", "YandexStationMini"} {
+	for _, model := range []string{"yandexmini_3_pro", "yandexmini", "YandexStationMini"} {
 		p, ok := profileFor(model)
 		if !ok {
 			t.Fatal(model)
@@ -238,5 +238,15 @@ func TestControlsDoNotSilentlyLoseTheirLoopToUpstreamDisplay(t *testing.T) {
 		if err := validateControlRenderer(p, &controlsConfig{}); err == nil {
 			t.Fatal("unsupported controls enabled", model)
 		}
+	}
+}
+
+func TestMidiControlsKeepThePipeRenderer(t *testing.T) {
+	p, ok := profileForDevice(yamDevice{Model: "yandexmidi"}, true)
+	if !ok || !p.pipeOutput || p.pcm != "" || p.leds != 24 {
+		t.Fatal("Midi lost its FIFO or renderer profile")
+	}
+	if err := validateControlRenderer(p, &controlsConfig{Voice: true, Ducking: true, NativeVolume: true, LEDs: true}); err != nil {
+		t.Fatal(err)
 	}
 }

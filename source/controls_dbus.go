@@ -121,6 +121,10 @@ func (s yamControlStation) ClaimSpeech(ctx context.Context, id string) error {
 }
 
 func serveControls(ctx context.Context, bus string, api *yamAPI, d yamDevice, cfg controlsConfig) error {
+	return serveControlsObserved(ctx, bus, api, d, cfg, nil)
+}
+
+func serveControlsObserved(ctx context.Context, bus string, api *yamAPI, d yamDevice, cfg controlsConfig, observer func(rendererControlState)) error {
 	r, err := openReceiver(bus)
 	if err != nil {
 		return err
@@ -149,7 +153,7 @@ func serveControls(ctx context.Context, bus string, api *yamAPI, d yamDevice, cf
 			fmt.Fprintf(os.Stderr, "station-airplay: Station 2 indication unavailable: %v\n", e)
 		}
 	}
-	c := &sharedController{cfg: cfg, receiver: r, station: station, ledCount: ledCount}
+	c := &sharedController{cfg: cfg, receiver: r, station: station, ledCount: ledCount, rendererUpdate: observer}
 	if cfg.NativePlayer {
 		c.native = newNativePlayer(quasarCLIPath)
 	}
@@ -258,6 +262,9 @@ func runControlLoop(ctx context.Context, c *sharedController, api *yamAPI, cfg c
 			step, done := context.WithTimeout(ctx, 4*time.Second)
 			report(c.tick(step, now))
 			done()
+		}
+		if c.rendererUpdate != nil {
+			c.rendererUpdate(c.rendererState(time.Now()))
 		}
 	}
 }

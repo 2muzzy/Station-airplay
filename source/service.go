@@ -278,12 +278,11 @@ func hardwareID() (string, error) {
 // stationVolume: the station's own volume (Quasar) is canonical and already
 // applied by the "speakers" softvol, so shairport-sync must not attenuate too;
 // the sender's slider is forwarded to the station instead (stationVolumeSync).
-func createConfigs(root string, stationVolume bool) (string, string, error) {
+func createConfigs(st string, stationVolume bool, name string) (string, string, error) {
 	mac, e := hardwareID()
 	if e != nil {
 		return "", "", e
 	}
-	st := filepath.Join(root, "state")
 	if e = os.MkdirAll(st, 0700); e != nil {
 		return "", "", e
 	}
@@ -315,7 +314,6 @@ pcm.spk_tee {
  slave.pcm "spk_file"
 }
 `, out, audioFIFO)
-	name := readOldName()
 	ignoreVolume := "no"
 	if stationVolume {
 		ignoreVolume = "yes"
@@ -333,7 +331,7 @@ pcm.spk_tee {
 	}
 	conf := fmt.Sprintf(`general = {
  output_backend = "alsa";
- name = "%s";
+ name = %q;
  model = "%s";
  %s
  mdns_backend = "avahi";
@@ -448,8 +446,10 @@ func preflight(p stationProfile) error {
 }
 
 type child struct {
-	name string
-	cmd  *exec.Cmd
+	name      string
+	cmd       *exec.Cmd
+	stopInput func()
+	done      chan struct{}
 }
 type exitInfo struct {
 	name string
@@ -484,6 +484,18 @@ func stopChildren(children []*child) {
 	for i := len(children) - 1; i >= 0; i-- {
 		c := children[i]
 		if c != nil && c.cmd.Process != nil {
+			if c.stopInput != nil {
+				// EOF lets aplay drain and close its shared ALSA client instead
+				// of aborting the hardware handle with a termination signal.
+				c.stopInput()
+				timer := time.NewTimer(2 * time.Second)
+				select {
+				case <-c.done:
+					timer.Stop()
+					continue
+				case <-timer.C:
+				}
+			}
 			_ = c.cmd.Process.Signal(syscall.SIGTERM)
 		}
 	}
@@ -526,6 +538,9 @@ type airplayState struct {
 
 // showVolume overlays a station-side volume change (buttons, Alice, app).
 func (s *airplayState) showVolume(percent int, now time.Time) {
+	if percent == s.volume {
+		return
+	}
 	s.volume = percent
 	s.volumeUntil = now.Add(1700 * time.Millisecond)
 }
@@ -533,6 +548,13 @@ func (s *airplayState) showVolume(percent int, now time.Time) {
 // inSession: an AirPlay stream is playing or paused, or a volume overlay shows.
 func (s *airplayState) inSession(now time.Time) bool {
 	return s.playing(now) || s.status == "paused" || now.Before(s.volumeUntil)
+}
+
+// FIFO playback has no durable UI claim: a sender may retain paused/playing
+// metadata after stopping its output. Only actual PCM or a bounded volume
+// change may hold the display away from Alice.
+func (s *airplayState) pipeUIActive(now time.Time) bool {
+	return now.Sub(s.lastAudio) < 1800*time.Millisecond || now.Before(s.volumeUntil)
 }
 
 func (s *airplayState) onMetadata(typ, code string, raw []byte, now time.Time) {
@@ -976,6 +998,12 @@ func waitForReady(ctx context.Context, name string, timeout time.Duration, check
 	}
 }
 func runPlum(ctx context.Context) error {
+	return runPlumWithControls(ctx, nil)
+}
+
+func runPlumWithControls(ctx context.Context, controls *controlsConfig) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	api, e := newYAMAPI()
 	if e != nil {
 		return e
@@ -1001,23 +1029,24 @@ func runPlum(ctx context.Context) error {
 	if e = waitForReady(ctx, "YAM clock/RGB API", 32*time.Second, func() error { return verifyYAM(api) }); e != nil {
 		return e
 	}
+	device, e := api.device()
+	if e != nil {
+		return e
+	}
+	receiverName, e := legacyReceiverName(p, device.Room)
+	if e != nil {
+		return e
+	}
 	executable, e := os.Executable()
 	if e != nil {
 		return e
 	}
 	root := filepath.Dir(filepath.Dir(executable))
-	volume := newStationVolume(root)
-	home, conf, e := createConfigs(root, volume != nil)
-	if e != nil {
-		return e
+	var volume nativeVolume
+	nativeControl := controls != nil && controls.NativeVolume
+	if !nativeControl {
+		volume = newStationVolume(root)
 	}
-	avahiConf, e := avahiConfig(root, home, p)
-	if e != nil {
-		return e
-	}
-	// Keep the short-lived YAM runtime token confined to this supervisor.
-	// Audio/Avahi child processes never need access to YAM's hardware API.
-	env := audioEnv(os.Environ(), home, "")
 	lockPath := "/tmp/plum-yam-airplay.lock"
 	lk, e := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0600)
 	if e != nil {
@@ -1028,6 +1057,16 @@ func runPlum(ctx context.Context) error {
 		return errors.New("another Station airplay service is already running")
 	}
 	defer syscall.Flock(int(lk.Fd()), syscall.LOCK_UN)
+	home, conf, e := createConfigs("/run/station-airplay", volume != nil || nativeControl, receiverName)
+	if e != nil {
+		return e
+	}
+	bus, e := preparePrivateMDNS(home, "/etc")
+	if e != nil {
+		return e
+	}
+	// Runtime API credentials stay confined to this supervisor.
+	env := audioEnv(os.Environ(), home, bus)
 	audioFD, e := ensureFIFO(audioFIFO)
 	if e != nil {
 		return e
@@ -1039,43 +1078,116 @@ func runPlum(ctx context.Context) error {
 	}
 	defer syscall.Close(metaFD)
 	children := []*child{}
-	defer func() { stopChildren(children) }()
-	nq, e := startChild(ctx, filepath.Join(root, "bin/nqptp"), nil, env)
-	if e != nil {
+	controlDone := make(chan struct{})
+	controlErrors := make(chan error, 1)
+	controlUpdates := make(chan rendererControlState, 1)
+	controlsStarted := false
+	defer func() {
+		cancel()
+		if controlsStarted {
+			<-controlDone
+		}
+		stopChildren(children)
+	}()
+	exits := make(chan exitInfo, 5)
+	monitor := func(c *child) {
+		children = append(children, c)
+		go func() {
+			err := c.cmd.Wait()
+			if c.done != nil {
+				// Only pipe children request a drain notification.
+				close(c.done)
+			}
+			exits <- exitInfo{c.name, err}
+		}()
+	}
+	launch := func(name, bin string, args ...string) error {
+		c, err := startChild(ctx, bin, args, env)
+		if err != nil {
+			return err
+		}
+		c.name = name
+		monitor(c)
+		return nil
+	}
+	ready := func(stage string, check func(context.Context) error) error {
+		return waitSharedStartup(ctx, stage, sharedStartupTimeout, sharedStartupInterval, exits, check)
+	}
+	if e = startPrivateMDNS(ctx, root, home, p, env, launch, exits); e != nil {
 		return e
 	}
-	children = append(children, nq)
-	if !processExists("avahi-daemon") {
-		// We intentionally never remount / or edit D-Bus policy from a YAM plugin.
-		if _, e := os.Stat("/etc/dbus-1/system.d/avahi-dbus.conf"); e != nil {
-			return errors.New("Avahi D-Bus policy is missing; run the included prepare-host.sh outside YAM")
-		}
-		av, e := startChild(ctx, filepath.Join(root, "bin/avahi-daemon"), []string{"--no-drop-root", "--no-chroot", "-f", avahiConf}, env)
-		if e != nil {
-			return e
-		}
-		children = append(children, av)
-	} else {
-		fmt.Println("reusing system avahi-daemon")
-	}
-	time.Sleep(1600 * time.Millisecond)
-	for _, c := range children {
-		if e := c.cmd.Process.Signal(syscall.Signal(0)); e != nil {
-			return fmt.Errorf("%s exited during startup", c.name)
-		}
-	}
-	sp, e := startChild(ctx, filepath.Join(root, "bin/shairport-sync-ap2"), []string{"-c", conf}, env)
-	if e != nil {
+	if e = launch("nqptp", filepath.Join(root, "bin/nqptp")); e != nil {
 		return e
 	}
-	children = append(children, sp)
+	if e = ready("nqptp UDP 9000", func(context.Context) error {
+		socket, err := net.ListenPacket("udp4", "127.0.0.1:9000")
+		if err == nil {
+			socket.Close()
+			return errors.New("nqptp has not bound UDP 9000")
+		}
+		return nil
+	}); e != nil {
+		return e
+	}
+	if e = launch("shairport-sync-ap2", filepath.Join(root, "bin/shairport-sync-ap2"), "-c", conf); e != nil {
+		return e
+	}
 	var vis <-chan []byte
 	if hw.pipeOutput {
-		ap, ch, e := playPipe(env)
-		if e != nil {
+		ap, ch, err := playPipe(env)
+		if err != nil {
+			return err
+		}
+		monitor(ap)
+		vis = ch
+	}
+	if e = ready("AirPlay RTSP 7000", func(parent context.Context) error {
+		dialer := net.Dialer{Timeout: time.Second}
+		conn, err := dialer.DialContext(parent, "tcp4", "127.0.0.1:7000")
+		if err != nil {
+			return err
+		}
+		return conn.Close()
+	}); e != nil {
+		return e
+	}
+	if controls != nil {
+		if e = ready("Midi receiver control API", func(parent context.Context) error {
+			r, err := openReceiver(bus)
+			if err != nil {
+				return err
+			}
+			defer r.conn.Close()
+			step, done := context.WithTimeout(parent, 3*time.Second)
+			defer done()
+			if _, err = r.State(step); err != nil {
+				return err
+			}
+			if controls.Ducking {
+				return r.Gain(step, 100, 0)
+			}
+			return nil
+		}); e != nil {
 			return e
 		}
-		children, vis = append(children, ap), ch
+		controlsStarted = true
+		go func() {
+			defer close(controlDone)
+			err := serveControlsObserved(ctx, bus, api, device, *controls, func(update rendererControlState) {
+				select {
+				case <-controlUpdates:
+				default:
+				}
+				select {
+				case controlUpdates <- update:
+				default:
+				}
+			})
+			if err != nil {
+				controlErrors <- err
+			}
+		}()
+		fmt.Println("Midi controls: voice/ducking/native-volume configured; legacy renderer retained")
 	}
 	if volume != nil {
 		if e := volume.start(); e != nil {
@@ -1084,12 +1196,9 @@ func runPlum(ctx context.Context) error {
 		defer volume.stop()
 		fmt.Printf("station volume: the sender's slider sets the station volume via %s\n", volume.backend())
 	}
-	fmt.Printf("%s running on %s (YAM clock+ring; no buttons)\n", version, hw.name)
-	exits := make(chan exitInfo, len(children))
-	for _, c := range children {
-		go func(c *child) { exits <- exitInfo{c.name, c.cmd.Wait()} }(c)
-	}
+	fmt.Printf("%s running on %s (YAM clock+ring)\n", version, hw.name)
 	state := &airplayState{status: "stopped"}
+	var controlUI rendererControlState
 	tz := clockZone()
 	tick := time.NewTicker(50 * time.Millisecond)
 	defer tick.Stop()
@@ -1110,6 +1219,13 @@ func runPlum(ctx context.Context) error {
 			return nil
 		case ex := <-exits:
 			return fmt.Errorf("%s exited unexpectedly: %v", ex.name, ex.err)
+		case err := <-controlErrors:
+			return fmt.Errorf("Midi controls stopped: %w", err)
+		case update := <-controlUpdates:
+			controlUI = update
+			if update.Session && update.VolumeKnown {
+				state.showVolume(update.Volume, time.Now())
+			}
 		case now := <-tick.C:
 			if e := readFD(metaFD, func(buf []byte) {
 				state.meta.feed(buf, func(t, c string, raw []byte) { state.onMetadata(t, c, raw, now) })
@@ -1121,7 +1237,11 @@ func runPlum(ctx context.Context) error {
 					volume.set(state.volume)
 					state.senderVolume = false
 				}
-				volume.poll(state.inSession(now), func(percent int) {
+				volumeActive := state.inSession(now)
+				if hw.pipeOutput {
+					volumeActive = state.pipeUIActive(now)
+				}
+				volume.poll(volumeActive, func(percent int) {
 					state.showVolume(percent, now)
 				})
 			}
@@ -1149,11 +1269,20 @@ func runPlum(ctx context.Context) error {
 			// With Alice running, the ring and clock are hers outside AirPlay
 			// sessions: release them once (YAM restores platformd's triggers
 			// and last clock frame) instead of repainting black and the time.
-			if hw.quasarCoexist && !state.inSession(now) {
+			paint := state.inSession(now)
+			if hw.pipeOutput {
+				paint = state.pipeUIActive(now)
+			}
+			if controls != nil {
+				paint = paint && controls.LEDs && controlUI.allowsPaint(now)
+			}
+			if hw.quasarCoexist && !paint {
 				if !released {
-					logAPIError("ring", api.ledOff(), &lastUIError)
-					logAPIError("clock", api.clockOff(), &lastClockError)
-					released, oldRing, oldFrameKey = true, "", ""
+					ringErr, clockErr := api.ledOff(), api.clockOff()
+					logAPIError("ring", ringErr, &lastUIError)
+					logAPIError("clock", clockErr, &lastClockError)
+					released = ringErr == nil && clockErr == nil
+					oldRing, oldFrameKey = "", ""
 				}
 				continue
 			}

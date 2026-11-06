@@ -1,3 +1,14 @@
+- Fix Midi startup on firmware without a system Avahi account or D-Bus policy
+  by using a private D-Bus and isolated Avahi environment.
+- Let the Midi FIFO player finish through EOF before terminating it, preventing
+  plugin restarts from leaving the shared ALSA output unavailable to AirPlay
+  and Alice.
+- Enable shared controls on Midi: voice commands, speech ducking, bidirectional
+  station volume and the optional Alice-button Play/Pause shortcut. Keep the
+  Midi visualizer and release its display and ring when playback stops or
+  Alice needs them. Controls require the launcher to pass a configuration file.
+- Advertise Midi as `Yandex Midi AirPlay`, with the room supplied by Luna.
+
 ## 2.0.9
 
 - Keep Luna as the station-volume owner on every board. The old automatic

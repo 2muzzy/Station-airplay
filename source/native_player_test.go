@@ -52,6 +52,22 @@ func TestNativePlayerPausesAndStops(t *testing.T) {
 	}
 }
 
+func TestNativeCLIChildDoesNotInheritRuntimeCredentials(t *testing.T) {
+	for _, key := range []string{"LUNA_API_TOKEN", "LUNA_API_URL", "YAM_API_TOKEN", "YAM_API_URL"} {
+		t.Setenv(key, "test-only-runtime-value")
+	}
+	guard := `for name in LUNA_API_TOKEN LUNA_API_URL YAM_API_TOKEN YAM_API_URL; do
+  env | cut -d= -f1 | grep -qx "$name" && exit 42
+done
+`
+	body := strings.Replace(fakeCLI, `echo "Connected to DirectiveSequencer"`, guard+`echo "Connected to DirectiveSequencer"`, 1)
+	p := newNativePlayer(writeFakeCLI(t, body))
+	defer p.Stop()
+	if err := p.Pause(context.Background()); err != nil {
+		t.Fatalf("native CLI received runtime credentials: %v", err)
+	}
+}
+
 func TestNativePlayerStopKillsWedgedCLI(t *testing.T) {
 	path := writeFakeCLI(t, `#!/bin/sh
 echo "Connected to DirectiveSequencer"
