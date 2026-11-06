@@ -112,14 +112,6 @@ func runWithControls(ctx context.Context, sharedAudio bool, controls *controlsCo
 		fmt.Fprintf(os.Stderr, "station-airplay: shared controls disabled: %v\n", err)
 		controls = nil
 	}
-	if p.pcm == "" {
-		if controls != nil {
-			if err = controlsPreflight(ctx, api, d, controls); err != nil {
-				return err
-			}
-		}
-		return runPlumWithControls(ctx, controls)
-	}
 	p, err = profileWithRoom(p, d.Room)
 	if err != nil {
 		return err
@@ -141,14 +133,8 @@ func validateControlRenderer(p stationProfile, controls *controlsConfig) error {
 	if controls == nil {
 		return nil
 	}
-	if p.ui {
+	if p.ui && !isMidiProfile(p) {
 		return errors.New("shared controls on clock-equipped Light 2 require --shared-audio; upstream display mode cannot own the same UI")
-	}
-	if p.pcm == "" {
-		if p.name == "midi" && p.pipeOutput {
-			return nil // FIFO audio and one legacy renderer, observed by controls.
-		}
-		return errors.New("shared controls are not enabled for legacy Plum/Midi renderer")
 	}
 	if p.receiverABI == "aarch64" {
 		return errors.New("shared controls require the control-enabled ARMhf receiver; AArch64 control build is not qualified")
@@ -168,6 +154,17 @@ func profileForDevice(d yamDevice, sharedAudio bool) (stationProfile, bool) {
 		return plumSharedProfile, true
 	}
 	return p, ok
+}
+
+func isMidiProfile(p stationProfile) bool {
+	return len(p.models) == 1 && p.models[0] == "yandexmidi"
+}
+
+func profileOutputRate(p stationProfile) int {
+	if p.outputRate != 0 {
+		return p.outputRate
+	}
+	return 48000
 }
 
 func receiverConfig(p stationProfile) string {
@@ -193,13 +190,13 @@ func receiverConfig(p stationProfile) string {
 sessioncontrol = { allow_session_interruption = "yes"; session_timeout = 60; };
 alsa = {
  output_device = %q;
- output_rate = 48000;
+ output_rate = %d;
  output_channels = 2;
  output_format = "S16_LE";
  disable_standby_mode = "never";
 };
 %s
-`, p.name, p.airplayModel, device, meta)
+`, p.name, p.airplayModel, device, profileOutputRate(p), meta)
 }
 
 // uiAsound is the receiver's private ~/.asoundrc. The file plugin feeds the
@@ -391,6 +388,8 @@ func serveSharedControls(ctx context.Context, p stationProfile, api *yamAPI, d y
 		return err
 	}
 	var metaFD, audioFD int
+	var pcm <-chan visualizerPCM
+	var pcmErrors <-chan error
 	if p.ui {
 		if api, err = newYAMAPI(); err != nil {
 			return err
@@ -409,6 +408,9 @@ func serveSharedControls(ctx context.Context, p stationProfile, api *yamAPI, d y
 			return err
 		}
 		defer syscall.Close(metaFD)
+		var stopPCM func()
+		pcm, pcmErrors, stopPCM = startVisualizerPCM(audioFD)
+		defer stopPCM() // Registered before child cleanup: keep draining until they stop.
 	}
 	for _, port := range []int{319, 320, 9000} {
 		socket, e := net.ListenPacket("udp4", fmt.Sprintf(":%d", port))
@@ -431,6 +433,7 @@ func serveSharedControls(ctx context.Context, p stationProfile, api *yamAPI, d y
 	controlDone := make(chan struct{})
 	controlErrors := make(chan error, 1)
 	controlsStarted := false
+	controlUpdates := make(chan rendererControlState, 1)
 	defer func() {
 		cancel()
 		if controlsStarted {
@@ -499,11 +502,6 @@ func serveSharedControls(ctx context.Context, p stationProfile, api *yamAPI, d y
 	if err = launchAP2("shairport-sync", "-c", conf, "-v", "--statistics"); err != nil {
 		return err
 	}
-	if p.ui {
-		fmt.Printf("%s model=%s protocol=AirPlay2 pcm=%s Alice=shared UI=clock+led\n", version, p.models[0], p.pcm)
-		return renderDisplay(ctx, api, metaFD, audioFD, exits)
-	}
-	fmt.Printf("%s model=%s protocol=AirPlay2 pcm=%s Alice=shared UI=off\n", version, p.models[0], p.pcm)
 	if controls != nil {
 		if err = ready("receiver controls D-Bus API", func(parent context.Context) error {
 			r, e := openReceiver(bus)
@@ -524,11 +522,29 @@ func serveSharedControls(ctx context.Context, p stationProfile, api *yamAPI, d y
 		controlsStarted = true
 		go func() {
 			defer close(controlDone)
-			if e := serveControls(ctx, bus, api, d, *controls); e != nil {
+			var observer func(rendererControlState)
+			if p.ui {
+				observer = func(update rendererControlState) {
+					select {
+					case <-controlUpdates:
+					default:
+					}
+					select {
+					case controlUpdates <- update:
+					default:
+					}
+				}
+			}
+			if e := serveControlsObserved(ctx, bus, api, d, *controls, observer); e != nil {
 				controlErrors <- e
 			}
 		}()
 	}
+	if p.ui {
+		fmt.Printf("%s model=%s protocol=AirPlay2 pcm=%s rate=%d Alice=shared UI=clock+led\n", version, p.models[0], p.pcm, profileOutputRate(p))
+		return renderDisplay(ctx, api, metaFD, exits, displayInput{profile: p, controls: controls, pcm: pcm, pcmErrors: pcmErrors, updates: controlUpdates, controlErrors: controlErrors})
+	}
+	fmt.Printf("%s model=%s protocol=AirPlay2 pcm=%s Alice=shared UI=off\n", version, p.models[0], p.pcm)
 	select {
 	case <-ctx.Done():
 		return nil

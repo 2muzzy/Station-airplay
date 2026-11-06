@@ -241,12 +241,27 @@ func TestControlsDoNotSilentlyLoseTheirLoopToUpstreamDisplay(t *testing.T) {
 	}
 }
 
-func TestMidiControlsKeepThePipeRenderer(t *testing.T) {
+func TestMidiUsesSharedMixerAndKeepsDisplay(t *testing.T) {
 	p, ok := profileForDevice(yamDevice{Model: "yandexmidi"}, true)
-	if !ok || !p.pipeOutput || p.pcm != "" || p.leds != 24 {
-		t.Fatal("Midi lost its FIFO or renderer profile")
+	if !ok || p.pcm != "speakers" || p.receiverABI != "armhf" || !p.ui || p.leds != 24 || p.digitBase != 1 {
+		t.Fatalf("Midi must use its shared PCM and existing renderer: %+v", p)
+	}
+	if p.name != "Yandex Midi AirPlay" || firmwareALSA(p) != "/usr/lib/libasound.so.2" {
+		t.Fatalf("Midi name or firmware ALSA changed: %+v", p)
 	}
 	if err := validateControlRenderer(p, &controlsConfig{Voice: true, Ducking: true, NativeVolume: true, LEDs: true}); err != nil {
 		t.Fatal(err)
+	}
+	conf := receiverControlConfig(p, &controlsConfig{Voice: true, NativeVolume: true})
+	for _, setting := range []string{`output_device = "spk_tee"`, "output_rate = 96000", `output_format = "S16_LE"`, "output_channels = 2", "port = 5000", metadataFIFO, `ignore_volume_control = "yes"`} {
+		if !strings.Contains(conf, setting) {
+			t.Fatalf("missing Midi setting %q: %s", setting, conf)
+		}
+	}
+	if strings.Contains(conf, `resync_threshold_in_seconds = 0;`) || strings.Contains(conf, "0.5;") {
+		t.Fatal("direct PCM must report latency and keep normal synchronization")
+	}
+	if got := uiAsound(p.pcm, audioFIFO); !strings.Contains(got, `slave.pcm "speakers"`) || strings.Contains(got, "hw:0,0") || strings.Contains(got, "type null") {
+		t.Fatalf("visualizer tee bypasses the shared mixer: %s", got)
 	}
 }

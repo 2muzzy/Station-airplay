@@ -7,17 +7,6 @@ import (
 	"unicode/utf8"
 )
 
-// Keep the legacy hardware profile name ("midi") separate from its public
-// receiver name; renderer/control selection still uses that hardware identity.
-func legacyReceiverName(p stationProfile, room string) (string, error) {
-	if p.name != "midi" || !p.pipeOutput {
-		return readOldName(), nil
-	}
-	p.name = "Yandex Midi AirPlay"
-	p, err := profileWithRoom(p, room)
-	return p.name, err
-}
-
 // Room comes from the shared YAM device API, not per-plugin configuration.
 // Other YAM versions omit it, preserving the original receiver name.
 func profileWithRoom(p stationProfile, room string) (stationProfile, error) {

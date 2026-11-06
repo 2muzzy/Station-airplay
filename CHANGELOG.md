@@ -1,8 +1,9 @@
 - Fix Midi startup on firmware without a system Avahi account or D-Bus policy
   by using a private D-Bus and isolated Avahi environment.
-- Let the Midi FIFO player finish through EOF before terminating it, preventing
-  plugin restarts from leaving the shared ALSA output unavailable to AirPlay
-  and Alice.
+- Move Midi to the shared ALSA lifecycle with the firmware library and a
+  96 kHz output matching its native mixer. Remove the separate FIFO/aplay
+  playback path; keep an independently drained PCM copy for the visualizer
+  so slow display updates cannot block audio.
 - Enable shared controls on Midi: voice commands, speech ducking, bidirectional
   station volume and the optional Alice-button Play/Pause shortcut. Keep the
   Midi visualizer and release its display and ring when playback stops or

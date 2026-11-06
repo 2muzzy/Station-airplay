@@ -25,7 +25,7 @@ func waitSharedStartup(ctx context.Context, stage string, timeout, interval time
 		case <-probeCtx.Done():
 			return failure()
 		case ex := <-exits:
-			return fmt.Errorf("%s: %s exited during startup: %v", stage, ex.name, ex.err)
+			return fmt.Errorf("%s: %s exited during startup: %w", stage, ex.name, &childFailure{name: ex.name, err: ex.err})
 		default:
 		}
 		last = check(probeCtx)
@@ -34,7 +34,7 @@ func waitSharedStartup(ctx context.Context, stage string, timeout, interval time
 		case <-probeCtx.Done():
 			return failure()
 		case ex := <-exits:
-			return fmt.Errorf("%s: %s exited during startup: %v", stage, ex.name, ex.err)
+			return fmt.Errorf("%s: %s exited during startup: %w", stage, ex.name, &childFailure{name: ex.name, err: ex.err})
 		default:
 		}
 		if last == nil {
@@ -47,7 +47,7 @@ func waitSharedStartup(ctx context.Context, stage string, timeout, interval time
 			return failure()
 		case ex := <-exits:
 			timer.Stop()
-			return fmt.Errorf("%s: %s exited during startup: %v", stage, ex.name, ex.err)
+			return fmt.Errorf("%s: %s exited during startup: %w", stage, ex.name, &childFailure{name: ex.name, err: ex.err})
 		case <-timer.C:
 		}
 	}

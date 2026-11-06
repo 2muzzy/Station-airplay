@@ -87,7 +87,6 @@ Launcher хранит файл в `$LUNA_PLUGIN_STATE/airplay-controls.json`. В
 | `YAM_API_URL` + `YAM_API_TOKEN` | Совместимость с runtime API старого YAM | Используются, только если нет обеих переменных Luna. Неполные или конфликтующие пары отклоняются. |
 | `LUNA_PLUGIN_STATE` | Каталог состояния для launcher пакета v2 | Задаётся Luna; вручную экспортировать переменную в SSH-сессии не нужно. |
 | `PLUM_TZ` | Часовой пояс старого визуализатора Лайт 2/Миди | Далее читается `/data/shairport/tz`, затем `MSK-3` (UTC+3). Поддерживаются простое POSIX-смещение вроде `UZT-5` и IANA-зона при доступной базе зон. |
-| `STATION_AIRPLAY_QUASAR` | Выбор `on`/`off` для Quasar на старом FIFO-пути Миди | Далее читается `/data/shairport/quasar`; без файла — `on`. `off` останавливает Алису на время работы приёмника. [Подробнее](MIDI.md). |
 | `LUNA_VOLUME_MANAGER_ADDR` | Переопределяет адрес для проверки доступности volume manager | Проверяется `volume_manager.port` из `/system/vendor/quasar/quasar.cfg`. Обычно менять не нужно. |
 
 Runtime-токены создаёт хост. Не сохраняйте их в JSON, репозитории или issue. Супервизор не передаёт `LUNA_API_*` и `YAM_API_*` аудиопроцессам.

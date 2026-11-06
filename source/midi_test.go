@@ -40,7 +40,7 @@ func TestMidiProfileFromYAM(t *testing.T) {
 	if e = verifyYAM(a); e != nil {
 		t.Fatal(e)
 	}
-	if hw.name != "midi" || ledCount != 24 {
+	if hw.name != "Yandex Midi AirPlay" || ledCount != 24 {
 		t.Fatalf("profile %q, ring preflight wrote %d LEDs", hw.name, ledCount)
 	}
 }
@@ -122,16 +122,16 @@ func TestMidiPipeRendererReleasesStalePlaybackMetadata(t *testing.T) {
 	now := time.Now()
 	for _, status := range []string{"playing", "paused"} {
 		s := &airplayState{status: status, lastAudio: now.Add(-3 * time.Second)}
-		if s.pipeUIActive(now) {
+		if s.pcmUIActive(now) {
 			t.Fatalf("stale %s metadata retained the display", status)
 		}
 		s.lastAudio = now
-		if !s.pipeUIActive(now) {
+		if !s.pcmUIActive(now) {
 			t.Fatal("actual PCM did not activate the renderer")
 		}
 		s.lastAudio = now.Add(-3 * time.Second)
 		s.showVolume(40, now)
-		if !s.pipeUIActive(now) || s.pipeUIActive(now.Add(2*time.Second)) {
+		if !s.pcmUIActive(now) || s.pcmUIActive(now.Add(2*time.Second)) {
 			t.Fatal("volume overlay did not remain bounded")
 		}
 	}
