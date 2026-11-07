@@ -28,6 +28,7 @@ assert set(by_target) == {
     "cucumber",
     "mango",
     "orion",
+    "pickle",
     "plum",
     "yandexmicro",
     "yandexmidi",
@@ -79,6 +80,20 @@ assert by_target["yandexmicro"]["config"] == {
 assert by_target["mango"]["config"]["native_volume"] is False
 assert by_target["mango"]["config"]["native_player"] is False
 assert by_target["mango"]["config"]["alice_button"] is False
+
+# Mini 3 Pro reuses the Mini 3 runtime but adds the AArch64 receiver assets.
+assert not by_target["bergamot"].get("base_target")
+assert not by_target["bergamot"].get("models_append")
+assert not by_target["bergamot"].get("extra_files")
+pickle = by_target["pickle"]
+assert pickle["base_target"] == "bergamot"
+assert pickle["controls_config"] is False
+assert pickle["models_append"] == ["yandexmini_3_pro"]
+assert set(pickle["extra_files"]) == {
+    "bin/shairport-sync-ap2-aarch64",
+    "lib/aarch64/libplist-2.0.so.3",
+}
+assert pickle["config"] == by_target["bergamot"]["config"]
 
 for target in matrix["targets"]:
     launch = module.render_launcher(template, target)

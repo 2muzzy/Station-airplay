@@ -18,6 +18,28 @@
       }
     },
     {
+      "target": "pickle",
+      "base_target": "bergamot",
+      "controls_config": false,
+      "sleep": [10],
+      "dbus_export": true,
+      "mango_guard": false,
+      "models_append": ["yandexmini_3_pro"],
+      "extra_files": {
+        "bin/shairport-sync-ap2-aarch64": "bin/shairport-sync-ap2-aarch64",
+        "lib/aarch64/libplist-2.0.so.3": "lib/aarch64/libplist-2.0.so.3"
+      },
+      "config": {
+        "voice": true,
+        "native_volume": true,
+        "ducking": true,
+        "leds": true,
+        "led_level": 200,
+        "native_player": false,
+        "alice_button": false
+      }
+    },
+    {
       "target": "cucumber",
       "controls_config": true,
       "sleep": [10],

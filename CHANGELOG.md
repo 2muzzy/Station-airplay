@@ -1,8 +1,11 @@
-## Unreleased
+## 2.1.1
 
+- Add a Mini 3 Pro (`pickle`) `.yampkg` built from the Mini 3 base with the
+  AArch64 receiver and `libplist`; it stays audio-only while AArch64 shared
+  controls remain unqualified.
 - Add a reproducible per-target `.yampkg` builder
   (`scripts/package_yampkg.py`) with a canonical launcher/config matrix
-  (`release/yampkg/`). The next package passes `--controls-config` for Midi and
+  (`release/yampkg/`). This release passes `--controls-config` for Midi and
   Mini: Midi gets voice, ducking, volume and the Alice button; Mini keeps the
   volume-only profile instead of silently starting audio-only.
 - Fix Midi startup on firmware without a system Avahi account or D-Bus policy

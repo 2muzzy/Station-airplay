@@ -79,6 +79,31 @@ def validate_matrix(matrix):
             raise SystemExit("%s: dbus_export must be a boolean" % name)
         if not isinstance(target.get("mango_guard"), bool):
             raise SystemExit("%s: mango_guard must be a boolean" % name)
+        base_target = target.get("base_target", name)
+        if (
+            not isinstance(base_target, str)
+            or not base_target
+            or "/" in base_target
+            or ".." in Path(base_target).parts
+        ):
+            raise SystemExit("%s: invalid base_target" % name)
+        models_append = target.get("models_append", [])
+        if not isinstance(models_append, list) or not all(
+            isinstance(model, str) and model for model in models_append
+        ):
+            raise SystemExit("%s: models_append must be a list of model IDs" % name)
+        if len(set(models_append)) != len(models_append):
+            raise SystemExit("%s: duplicate models_append entry" % name)
+        extra_files = target.get("extra_files", {})
+        if not isinstance(extra_files, dict):
+            raise SystemExit("%s: extra_files must be an object" % name)
+        for source, destination in extra_files.items():
+            for value in (source, destination):
+                if not isinstance(value, str) or not value:
+                    raise SystemExit("%s: extra_files paths must be strings" % name)
+                path = Path(value)
+                if path.is_absolute() or ".." in path.parts:
+                    raise SystemExit("%s: unsafe extra_files path %s" % (name, value))
         config = target.get("config")
         if not isinstance(config, dict) or set(config) != set(CONFIG_KEYS):
             raise SystemExit("%s: config must contain exactly %s" % (name, ", ".join(CONFIG_KEYS)))
@@ -172,7 +197,7 @@ def verify_base(stage, manifest):
             raise SystemExit("base package hash mismatch: %s" % relative)
 
 
-def patch_plugin(path, base_version, version):
+def patch_plugin(path, base_version, version, models_append=()):
     text = Path(path).read_text()
     old = 'version = "%s"' % base_version
     if text.count(old) != 1:
@@ -182,14 +207,34 @@ def patch_plugin(path, base_version, version):
         if text.count(OLD_PERMISSIONS) != 1:
             raise SystemExit("%s: cannot add narrow permissions" % path)
         text = text.replace(OLD_PERMISSIONS, NEW_PERMISSIONS, 1)
+    if models_append:
+        match = re.search(r"^models = (\[.*\])$", text, re.MULTILINE)
+        if not match:
+            raise SystemExit("%s: cannot find compatibility models" % path)
+        models = json.loads(match.group(1))
+        for model in models_append:
+            if model not in models:
+                models.append(model)
+        text = text[: match.start(1)] + json.dumps(models) + text[match.end(1) :]
     Path(path).write_text(text)
 
 
-def patch_manifest(manifest, version, stage):
+def extra_file_relative(destination):
+    return str(PLUGIN_REL / destination)[len("files/") :]
+
+
+def patch_manifest(manifest, target, version, stage, extra_files=()):
+    manifest["target"] = target
     manifest["version"] = version
     depends = [item for item in manifest.get("depends", []) if not item.startswith("yam/luna")]
     depends.append(LUNA_DEPENDENCY)
     manifest["depends"] = depends
+    for destination in extra_files:
+        relative = extra_file_relative(destination)
+        path = Path(stage) / "files" / relative
+        if not path.is_file():
+            raise SystemExit("extra file missing: %s" % destination)
+        manifest["files_sha256"][relative] = sha256_file(path)
     manifest["files_sha256"] = {
         relative: sha256_file(Path(stage) / "files" / relative)
         for relative in manifest["files_sha256"]
@@ -235,6 +280,13 @@ def verify_output(package, target, binary, version, launcher):
         plugin = archive.extractfile(str(PLUGIN_REL / "plugin.toml")).read().decode()
         if 'version = "%s"' % version not in plugin:
             raise SystemExit("%s: plugin version mismatch" % package)
+        for model in target.get("models_append", []):
+            if '"%s"' % model not in plugin:
+                raise SystemExit("%s: compatibility model missing: %s" % (package, model))
+        members = set(archive.getnames())
+        for destination in target.get("extra_files", {}):
+            if str(PLUGIN_REL / destination) not in members:
+                raise SystemExit("%s: extra file missing: %s" % (package, destination))
 
 
 def find_base(base_dir, name):
@@ -249,15 +301,16 @@ def find_base(base_dir, name):
     return matches[0]
 
 
-def build_target(target, base_dir, binary, version, out_dir, force, template):
-    base = find_base(base_dir, target["target"])
+def build_target(target, base_dir, binary, version, out_dir, force, template, extra_dir):
+    base_name = target.get("base_target", target["target"])
+    base = find_base(base_dir, base_name)
     stage = tempfile.mkdtemp(prefix="yampkg-%s-" % target["target"])
     try:
         extract_package(base, stage)
         manifest_path = Path(stage) / MANIFEST
         yaml = _yaml()
         manifest = yaml.safe_load(manifest_path.read_text())
-        if manifest.get("target") != target["target"]:
+        if manifest.get("target") != base_name:
             raise SystemExit("%s: base target mismatch" % base)
         base_version = manifest.get("version")
         if not base_version:
@@ -271,8 +324,26 @@ def build_target(target, base_dir, binary, version, out_dir, force, template):
         launcher_path.write_text(launcher)
         os.chmod(launcher_path, 0o755)
         (plugin / "config/airplay-controls-v2.json").write_text(render_config(target))
-        patch_plugin(plugin / "plugin.toml", base_version, version)
-        patch_manifest(manifest, version, stage)
+        extra_files = target.get("extra_files", {})
+        for source, destination in extra_files.items():
+            if not extra_dir:
+                raise SystemExit("%s: --extra-dir is required" % target["target"])
+            source_path = Path(extra_dir) / source
+            if not source_path.is_file():
+                raise SystemExit("%s: missing extra file %s" % (target["target"], source))
+            destination_path = plugin / destination
+            destination_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source_path, destination_path)
+            shutil.copymode(source_path, destination_path)
+        patch_plugin(
+            plugin / "plugin.toml",
+            base_version,
+            version,
+            target.get("models_append", []),
+        )
+        patch_manifest(
+            manifest, target["target"], version, stage, extra_files.values()
+        )
         manifest_path.write_text(
             yaml.safe_dump(manifest, sort_keys=False, allow_unicode=True)
         )
@@ -289,6 +360,7 @@ def build_target(target, base_dir, binary, version, out_dir, force, template):
         verify_output(out, target, binary, version, launcher)
         return {
             "target": target["target"],
+            "base_target": base_name,
             "version": version,
             "controls_config": target["controls_config"],
             "package": out.name,
@@ -314,6 +386,11 @@ def main(argv=None):
     parser.add_argument("--check", action="store_true", help="validate the matrix only")
     parser.add_argument("--base", help="directory with published base .yampkg files")
     parser.add_argument("--binary", help="ARMv7 supervisor to embed")
+    parser.add_argument(
+        "--extra-dir",
+        default=str(ROOT),
+        help="directory with extra runtime files (default: repository root)",
+    )
     parser.add_argument("--version", help="output version (default: plugin.toml)")
     parser.add_argument("--out", default=str(ROOT / "dist/yampkg"))
     parser.add_argument("--matrix", default=str(ROOT / "release/yampkg/targets.json"))
@@ -344,6 +421,9 @@ def main(argv=None):
             parser.error("unknown targets: %s" % ", ".join(sorted(unknown)))
         targets = [target for target in targets if target["target"] in wanted]
 
+    if any(target.get("extra_files") for target in targets):
+        if not Path(args.extra_dir).is_dir():
+            parser.error("--extra-dir must be a directory")
     binary = Path(args.binary).read_bytes()
     if binary[:4] != b"\x7fELF" or binary[4] != 1:
         raise SystemExit("supervisor must be ELF32")
@@ -356,7 +436,14 @@ def main(argv=None):
     records = []
     for target in targets:
         record = build_target(
-            target, args.base, binary, version, out_dir, args.force, template
+            target,
+            args.base,
+            binary,
+            version,
+            out_dir,
+            args.force,
+            template,
+            args.extra_dir,
         )
         records.append(record)
         print(
