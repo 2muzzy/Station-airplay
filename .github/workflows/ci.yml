@@ -50,6 +50,9 @@ jobs:
         run: |
           GOOS=linux GOARCH=arm GOARM=7 CGO_ENABLED=0 go build -buildvcs=false -trimpath -ldflags='-s -w' -o ../bin/station-airplay .
           GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -buildvcs=false -trimpath -ldflags='-s -w' -o /tmp/station-airplay-aarch64 .
+      - name: Verify supervisor version string
+        run: |
+          strings bin/station-airplay | grep -F "Station airplay ${VERSION}"
       - name: Pack only the static supervisor with verified UPX
         run: |
           curl -fsSL https://github.com/upx/upx/releases/download/v5.2.1/upx-5.2.1-amd64_linux.tar.xz -o /tmp/upx.tar.xz

@@ -1,3 +1,17 @@
+## 2.1.2
+
+- Fix `station-airplay --version` still reporting `2.1.0` in the 2.1.1
+  packages. The supervisor version now follows `plugin.toml`; CI fails when the
+  embedded version string and the package version disagree.
+- Fix clean-install auto-enable. On hosts where Luna has no `settings.toml`,
+  the postinstall now creates it before setting `allow_plugin_binaries`, so the
+  plugin starts without a manual enable.
+- The Mini 3 Pro (`pickle`) package was exercised on the kuyase emulator:
+  installation, Luna 0.2.24, plugin start, the AArch64 receiver and RTSP
+  `:5000`. Live sound, microphone, button and multiroom remain NOT_RUN.
+- No changes to audio, the 10% volume curve or the disabled custom LED
+  indication.
+
 ## 2.1.1
 
 - Add a Mini 3 Pro (`pickle`) `.yampkg` built from the Mini 3 base with the

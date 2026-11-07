@@ -284,6 +284,12 @@ def verify_output(package, target, binary, version, launcher):
             if '"%s"' % model not in plugin:
                 raise SystemExit("%s: compatibility model missing: %s" % (package, model))
         members = set(archive.getnames())
+        postinstall_src = ROOT / "release/yampkg/airplay-postinstall.sh"
+        if postinstall_src.is_file():
+            if "files/bin/airplay-postinstall" not in members:
+                raise SystemExit("%s: postinstall missing" % package)
+            if archive.extractfile("files/bin/airplay-postinstall").read() != postinstall_src.read_bytes():
+                raise SystemExit("%s: postinstall mismatch" % package)
         for destination in target.get("extra_files", {}):
             if str(PLUGIN_REL / destination) not in members:
                 raise SystemExit("%s: extra file missing: %s" % (package, destination))
@@ -319,6 +325,15 @@ def build_target(target, base_dir, binary, version, out_dir, force, template, ex
 
         plugin = Path(stage) / PLUGIN_REL
         (plugin / "bin/station-airplay").write_bytes(binary)
+        postinstall_src = ROOT / "release/yampkg/airplay-postinstall.sh"
+        if postinstall_src.is_file():
+            postinstall_dst = Path(stage) / "files/bin/airplay-postinstall"
+            postinstall_dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(postinstall_src, postinstall_dst)
+            os.chmod(postinstall_dst, 0o755)
+            manifest["files_sha256"]["bin/airplay-postinstall"] = sha256_file(
+                postinstall_dst
+            )
         launcher = render_launcher(template, target)
         launcher_path = plugin / "launch-airplay.sh"
         launcher_path.write_text(launcher)
