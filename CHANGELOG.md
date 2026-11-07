@@ -1,3 +1,23 @@
+## 2.1.0
+
+- Shared controls on Luna hosts now use the Luna runtime API: native-player
+  pause/release and Alice-button events. The stock Quasar CLI remains the
+  fallback on older hosts. A native-player release is not sent before a
+  possible lease is acquired, and button polling starts only while a sender
+  is live.
+- The sender's volume slider is mapped to the station with a 0.8 curve and
+  10% steps, and feedback uses the inverse curve. Station readings keep their
+  native 5% grid so a handoff does not raise the station by one step.
+- Luna is the only volume owner on Luna hosts, including configurations left
+  by the old package backend. The package mixer remains for legacy YAM hosts.
+- The original Mini (`yandexmini`) runs its packaged D-Bus profile in
+  volume-only mode: the sender's slider controls the station, while voice,
+  ducking, indication, native player and the Alice button stay off. If Luna
+  cannot expose the volume endpoint, the Mini keeps playing audio-only.
+- New narrow permissions `media.native` and `input.alice`; the package now
+  requires `yam/luna >=0.2.24`.
+- No LED, spectrum, artwork or pause-colour changes are included.
+
 ## 2.0.9
 
 - Keep Luna as the station-volume owner on every board. The old automatic

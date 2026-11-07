@@ -25,13 +25,10 @@ prebuilt binaries, device data or deployment is included.
 
 ## Companion requirement / release gate
 
-Requires the runtime API in the companion Luna PR. Public Luna v0.2.23 alone
-does NOT implement those new endpoints. Capability detection remains in place;
-an older/missing capability disables the optional handover/button with a
-diagnostic rather than inventing success. Generated YAM package metadata must
-depend on the first Luna release containing the new API before publication.
-The final minimum version must be chosen when that release is assigned;
-claiming that all public v0.2.23 builds support it would be incorrect.
+Requires the runtime API released in Luna v0.2.24. Older Luna builds do not
+implement those endpoints. Capability detection remains in place; a missing
+capability disables the optional handover/button with a diagnostic rather than
+inventing success. The published package declares `yam/luna >=0.2.24`.
 
 ## Validation of this candidate
 
@@ -46,5 +43,5 @@ claiming that all public v0.2.23 builds support it would be incorrect.
 
 ## Base / submission status
 
-Prepared locally from Station-airplay v2.0.9 (3339feec989c34e1645b329446580568b5989ff2).
-Not pushed; no GitHub PR, release or registry update created.
+Released as Station-airplay 2.1.0 from v2.0.9
+(3339feec989c34e1645b329446580568b5989ff2).
