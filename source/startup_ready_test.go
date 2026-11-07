@@ -54,3 +54,13 @@ func TestSharedStartupBoundsSlowProbe(t *testing.T) {
 		t.Fatalf("err=%v elapsed=%v", err, time.Since(start))
 	}
 }
+
+func TestSharedStartupChildFailureRemainsRetryable(t *testing.T) {
+	exits := make(chan exitInfo, 1)
+	exits <- exitInfo{"shairport-sync", errors.New("NQPTP not initialized")}
+	err := waitSharedStartup(context.Background(), "receiver controls", time.Second, time.Millisecond, exits, func(context.Context) error { return nil })
+	var failed *childFailure
+	if !errors.As(err, &failed) || failed.name != "shairport-sync" {
+		t.Fatalf("startup child failure cannot use bounded restart: %v", err)
+	}
+}

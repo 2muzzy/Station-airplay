@@ -33,3 +33,29 @@ func TestRoomOptionalAndUTF8Safe(t *testing.T) {
 		}
 	}
 }
+
+func TestMidiReceiverNameUsesTheSharedRoomConvention(t *testing.T) {
+	for _, tc := range []struct{ room, want string }{
+		{"", "Yandex Midi AirPlay"},
+		{"  ", "Yandex Midi AirPlay"},
+		{"Гостиная", "Yandex Midi AirPlay (Гостиная)"},
+		{" Кабинет ", "Yandex Midi AirPlay (Кабинет)"},
+	} {
+		p, err := profileWithRoom(midiProfile, tc.room)
+		got := p.name
+		if err != nil || got != tc.want {
+			t.Fatalf("room=%q got=%q err=%v", tc.room, got, err)
+		}
+	}
+	p, err := profileWithRoom(midiProfile, strings.Repeat("Длинная комната", 8))
+	name := p.name
+	if err != nil || !utf8.ValidString(name) || len(name) > 50 || !strings.HasSuffix(name, "…)") {
+		t.Fatalf("unsafe DNS name %q: %v", name, err)
+	}
+	if _, err := profileWithRoom(midiProfile, "bad\nroom"); err == nil {
+		t.Fatal("control characters accepted in room")
+	}
+	if midiProfile.name != "Yandex Midi AirPlay" || midiProfile.pcm != "speakers" || midiProfile.leds != 24 {
+		t.Fatal("receiver naming changed Midi hardware identity")
+	}
+}

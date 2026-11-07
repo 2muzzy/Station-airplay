@@ -177,6 +177,7 @@ type sharedController struct {
 	station                     controlStation
 	ledCount                    int
 	active                      bool
+	audioActive                 bool
 	client                      string
 	pausedUntil                 time.Time
 	duckUntil                   time.Time
@@ -206,7 +207,8 @@ type sharedController struct {
 	// buttonSession gates the Luna Alice long-poll. Without a live sender the
 	// stock firmware owns the button, and polling would only burn CPU on a
 	// small device while competing with the vendor stack.
-	buttonSession atomic.Bool
+	buttonSession  atomic.Bool
+	rendererUpdate func(rendererControlState)
 }
 
 func (c *sharedController) speech(ctx context.Context, e speechEvent, now time.Time) error {
@@ -475,6 +477,7 @@ func (c *sharedController) tick(ctx context.Context, now time.Time) error {
 	s, err := c.receiver.State(ctx)
 	if err != nil {
 		c.buttonSession.Store(false)
+		c.audioActive = false
 		c.volumeReady = false
 		c.ledOwned = false
 		c.ledState = ""
@@ -509,6 +512,7 @@ func (c *sharedController) tick(ctx context.Context, now time.Time) error {
 		c.pausedUntil = time.Time{}
 	}
 	wasActive := c.active
+	c.audioActive = s.Active
 	// An attached AirPlay 2 output owns the session before RECORD/audio starts.
 	// Available alone is not enough: classic DACP metadata may be retained after
 	// a sender disconnects. Connected comes from the live paired event channel.
@@ -587,7 +591,9 @@ func (c *sharedController) tick(ctx context.Context, now time.Time) error {
 	}
 	// Sender feedback must not gate unrelated indication. Repaint slowly after
 	// native volume has settled: its overlay can replace our one-shot frame.
-	if c.cfg.LEDs && c.ledCount > 0 && c.aliceIdle && now.Before(c.speechFreshUntil) && !c.ledSuspended && !now.Before(c.ledQuietUntil) {
+	// An observed legacy renderer remains the sole UI owner. Keep LEDs in
+	// the config so indication-only setups still subscribe to Alice's state.
+	if c.cfg.LEDs && c.rendererUpdate == nil && c.ledCount > 0 && c.aliceIdle && now.Before(c.speechFreshUntil) && !c.ledSuspended && !now.Before(c.ledQuietUntil) {
 		state := "playing"
 		if !s.Active || now.Before(c.pausedUntil) {
 			state = "paused"
