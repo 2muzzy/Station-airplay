@@ -1,0 +1,181 @@
+{
+  "schema": 1,
+  "targets": [
+    {
+      "target": "bergamot",
+      "controls_config": false,
+      "sleep": [10],
+      "dbus_export": true,
+      "mango_guard": false,
+      "config": {
+        "voice": true,
+        "native_volume": true,
+        "ducking": true,
+        "leds": true,
+        "led_level": 200,
+        "native_player": false,
+        "alice_button": false
+      }
+    },
+    {
+      "target": "cucumber",
+      "controls_config": true,
+      "sleep": [10],
+      "dbus_export": true,
+      "mango_guard": false,
+      "config": {
+        "voice": true,
+        "native_volume": true,
+        "ducking": true,
+        "leds": true,
+        "led_level": 200,
+        "native_player": true,
+        "alice_button": true
+      }
+    },
+    {
+      "target": "mango",
+      "controls_config": true,
+      "sleep": [10, 4],
+      "dbus_export": true,
+      "mango_guard": true,
+      "config": {
+        "voice": true,
+        "native_volume": false,
+        "ducking": true,
+        "leds": true,
+        "led_level": 200,
+        "native_player": false,
+        "alice_button": false
+      }
+    },
+    {
+      "target": "orion",
+      "controls_config": false,
+      "sleep": [10, 4],
+      "dbus_export": true,
+      "mango_guard": false,
+      "config": {
+        "voice": true,
+        "native_volume": true,
+        "ducking": true,
+        "leds": true,
+        "led_level": 200,
+        "native_player": false,
+        "alice_button": false
+      }
+    },
+    {
+      "target": "plum",
+      "controls_config": true,
+      "sleep": [4],
+      "dbus_export": false,
+      "mango_guard": false,
+      "config": {
+        "voice": true,
+        "native_volume": true,
+        "ducking": true,
+        "leds": true,
+        "led_level": 200,
+        "native_player": true,
+        "alice_button": true
+      }
+    },
+    {
+      "target": "yandexmicro",
+      "controls_config": true,
+      "sleep": [4],
+      "dbus_export": false,
+      "mango_guard": false,
+      "config": {
+        "voice": true,
+        "native_volume": true,
+        "ducking": true,
+        "leds": true,
+        "led_level": 200,
+        "native_player": false,
+        "alice_button": false
+      }
+    },
+    {
+      "target": "yandexmidi",
+      "controls_config": true,
+      "sleep": [10],
+      "dbus_export": true,
+      "mango_guard": false,
+      "config": {
+        "voice": true,
+        "native_volume": true,
+        "ducking": true,
+        "leds": true,
+        "led_level": 200,
+        "native_player": true,
+        "alice_button": true
+      }
+    },
+    {
+      "target": "yandexmini",
+      "controls_config": true,
+      "sleep": [4],
+      "dbus_export": false,
+      "mango_guard": false,
+      "config": {
+        "voice": false,
+        "native_volume": true,
+        "ducking": false,
+        "leds": false,
+        "led_level": 200,
+        "native_player": false,
+        "alice_button": false
+      }
+    },
+    {
+      "target": "yandexmini_2",
+      "controls_config": true,
+      "sleep": [4],
+      "dbus_export": false,
+      "mango_guard": false,
+      "config": {
+        "voice": true,
+        "native_volume": true,
+        "ducking": true,
+        "leds": true,
+        "led_level": 200,
+        "native_player": true,
+        "alice_button": true
+      }
+    },
+    {
+      "target": "yandexplum",
+      "controls_config": true,
+      "sleep": [4],
+      "dbus_export": false,
+      "mango_guard": false,
+      "config": {
+        "voice": true,
+        "native_volume": true,
+        "ducking": true,
+        "leds": true,
+        "led_level": 200,
+        "native_player": true,
+        "alice_button": true
+      }
+    },
+    {
+      "target": "yandexstation_2",
+      "controls_config": true,
+      "sleep": [4],
+      "dbus_export": false,
+      "mango_guard": false,
+      "config": {
+        "voice": true,
+        "native_volume": true,
+        "ducking": true,
+        "leds": true,
+        "led_level": 200,
+        "native_player": true,
+        "alice_button": true
+      }
+    }
+  ]
+}

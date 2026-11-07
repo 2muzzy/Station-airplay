@@ -1,5 +1,10 @@
 ## Unreleased
 
+- Add a reproducible per-target `.yampkg` builder
+  (`scripts/package_yampkg.py`) with a canonical launcher/config matrix
+  (`release/yampkg/`). The next package passes `--controls-config` for Midi and
+  Mini: Midi gets voice, ducking, volume and the Alice button; Mini keeps the
+  volume-only profile instead of silently starting audio-only.
 - Fix Midi startup on firmware without a system Avahi account or D-Bus policy
   by using a private D-Bus and isolated Avahi environment.
 - Move Midi to the shared ALSA lifecycle with the firmware library and a
