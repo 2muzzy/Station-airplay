@@ -91,7 +91,7 @@ python3 tests/test_package.py
 
 Упаковщик этого репозитория создаёт универсальный legacy `.yap` с ID `station-airplay`. Модельные `.yampkg` релиза 2.0.9 содержат манифест YAM v2, launcher Luna, начальный JSON и `postinstall`. Их ID в Luna — `airplay.airplay-luna`.
 
-Инструмента сборки этих `.yampkg` в текущем дереве нет. `go build` и `scripts/package.py` не воспроизводят их оболочку. Для установки готового пакета v2 используйте [Releases](https://github.com/ryysel/Station-airplay/releases) или реестр по [инструкции](../docs/INSTALLATION.md).
+`scripts/package_yampkg.py` пересобирает модельные `.yampkg` из опубликованного базового релиза: заменяет супервизор, launcher и начальный JSON, добавляет AArch64-приёмник и `libplist` для `pickle`, обновляет target, версию, `depends` и хеши манифеста. Матрица целей и канонический launcher лежат в [`release/yampkg`](../release/yampkg/README.md). `go build` и `scripts/package.py` по-прежнему создают только legacy `.yap`; для установки готового пакета v2 используйте [Releases](https://github.com/ryysel/Station-airplay/releases) или реестр по [инструкции](../docs/INSTALLATION.md).
 
 ## Полная сборка базового runtime
 
