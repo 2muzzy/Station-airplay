@@ -94,12 +94,12 @@ type cliSession struct {
 	stopOnce  sync.Once
 }
 
-// stockCLIEnv removes the package library overrides so the stock shell script
-// and its loader use the system runtime. Everything else is inherited.
+// The stock CLI uses firmware libraries and never needs the supervisor's
+// runtime API credentials.
 func stockCLIEnv(env []string) []string {
 	out := make([]string, 0, len(env))
 	for _, v := range env {
-		if strings.HasPrefix(v, "LD_LIBRARY_PATH=") || strings.HasPrefix(v, "LD_PRELOAD=") {
+		if strings.HasPrefix(v, "LD_LIBRARY_PATH=") || strings.HasPrefix(v, "LD_PRELOAD=") || strings.HasPrefix(v, "LUNA_API_") || strings.HasPrefix(v, "YAM_API_") {
 			continue
 		}
 		out = append(out, v)

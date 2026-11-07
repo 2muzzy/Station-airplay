@@ -24,7 +24,8 @@ import (
 
 const (
 	// The Alice key as reported by every qualified stock keypad: Mini 2
-	// (sar0_pad0), Lite 2 (aw933xx/aw9610x) and Station 2 (midi_touch).
+	// (sar0_pad0), Lite 2 (aw933xx/aw9610x), Station 2 (midi_touch)
+	// and Midi (awinic_sar).
 	aliceButtonKey = 582
 	// EVIOCGBIT(EV_KEY) returns a bitmap of KEY_CNT (768) bits.
 	evKey          = 1
@@ -41,6 +42,7 @@ const (
 // itself is capability-based; this list only decides whether the option is
 // allowed on the device at all.
 var aliceButtonModels = map[string]bool{
+	"yandexmidi":      true,
 	"yandexmini_2":    true,
 	"yandexplum":      true,
 	"yandexstation_2": true,
