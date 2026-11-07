@@ -69,7 +69,7 @@ func TestLunaVolumeReadWriteAndReadback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := v.(*resilientVolume); !ok {
+	if _, ok := v.(*lunaControlVolume); !ok {
 		t.Fatalf("runtime URL without a dependency selected %T", v)
 	}
 	if v.Backend() != "Luna /api/volume" {
@@ -96,6 +96,39 @@ func TestLunaVolumeReadWriteAndReadback(t *testing.T) {
 	}
 	if sets.Load() != 1 {
 		t.Fatal("invalid percent reached the station")
+	}
+}
+
+func TestLunaVolumeDoesNotHideCoarseReadbackMismatch(t *testing.T) {
+	current := 20
+	host := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPost:
+			var request struct {
+				Percent int `json:"percent"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Errorf("set body: %v", err)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			// Synthetic coarse grid; not a claim about a physical Mini.
+			current = (request.Percent / 10) * 10
+			_ = json.NewEncoder(w).Encode(map[string]int{"percent": current})
+		default:
+			_ = json.NewEncoder(w).Encode(map[string]int{"percent": current})
+		}
+	}))
+	defer host.Close()
+	v, err := newLunaControlVolume(lunaVolumeAPI(t, host))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := v.SetVolume(context.Background(), 47); err == nil {
+		t.Fatalf("unqualified seven-point mismatch accepted: %v", got)
+	}
+	if got, err := v.SetVolume(context.Background(), 52); err != nil || got != 50 {
+		t.Fatalf("second coarse step rejected or misread: %v, %v", got, err)
 	}
 }
 
@@ -241,5 +274,51 @@ func TestVolumeBackendConfiguration(t *testing.T) {
 				t.Fatal("invalid backend configuration accepted")
 			}
 		})
+	}
+}
+
+// A Luna outage must not silently select a second station-volume owner.
+func TestLunaOwnerFailureDoesNotSelectMixer(t *testing.T) {
+	host := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer host.Close()
+	v, err := controlsVolume(context.Background(), lunaVolumeAPI(t, host), yamDevice{}, controlsConfig{NativeVolume: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := v.(*lunaControlVolume); !ok {
+		t.Fatalf("independent volume owner selected: %T", v)
+	}
+	if _, err := v.SetVolume(context.Background(), 40); err == nil {
+		t.Fatal("failed Luna write reported success")
+	}
+	if _, err := v.GetVolume(context.Background()); err == nil {
+		t.Fatal("failed Luna read reported a level")
+	}
+}
+
+func TestLunaOwnerMigratesLegacyPackageSettings(t *testing.T) {
+	for _, cfg := range []controlsConfig{
+		{NativeVolume: true, VolumeBackend: volumeBackendPackage},
+		{NativeVolume: true, VolumeDependency: "station-volume"},
+		{NativeVolume: true, VolumeBackend: volumeBackendPackage, VolumeDependency: "station-volume"},
+	} {
+		host, current, sets := lunaVolumeHost(t, 35)
+		api := lunaVolumeAPI(t, host)
+		v, err := controlsVolume(context.Background(), api, yamDevice{}, cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := v.(*lunaControlVolume); !ok {
+			t.Fatalf("legacy config selected %T on Luna", v)
+		}
+		if got, err := v.SetVolume(context.Background(), 55); err != nil || got != 55 {
+			t.Fatalf("migrated write: %v %v", got, err)
+		}
+		if current.Load() != 55 || sets.Load() != 1 {
+			t.Fatal("migrated change did not reach Luna exactly once")
+		}
+		host.Close()
 	}
 }

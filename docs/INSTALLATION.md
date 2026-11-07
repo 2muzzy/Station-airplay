@@ -48,7 +48,7 @@
    yam install airplay/airplay-luna
    ```
 
-   Пакет рекомендует `yam/luna >=0.2.14`, но YAM не устанавливает рекомендации автоматически: в плане установки есть только сам пакет. Если Luna ещё не установлена, выполните `yam install yam/luna`.
+   Пакет требует `yam/luna >=0.2.24`, но YAM не устанавливает рекомендации автоматически: в плане установки есть только сам пакет. Если Luna ещё не установлена, выполните `yam install yam/luna`.
 
    Фоновый установщик также включает настройку Luna `allow_plugin_binaries`. На BusyBox он может изменить `settings.toml` и перезапустить Luna с её прежними аргументами, чтобы разрешение вступило в силу. Ход действий виден в `/tmp/airplay-postinstall.log`.
 
@@ -68,10 +68,10 @@
 
 ## Установка из файла `.yampkg`
 
-Скачайте архив своей платформы из [Releases](https://github.com/ryysel/Station-airplay/releases). Например, для Станции 2 в релизе 2.0.9:
+Скачайте архив своей платформы из [Releases](https://github.com/ryysel/Station-airplay/releases). Например, для Станции 2 в релизе 2.1.0:
 
 ```sh
-yam install ./station-airplay-2.0.9-yandexstation_2.yampkg
+yam install ./station-airplay-2.1.0-yandexstation_2.yampkg
 ```
 
 YAM проверит платформу и распакует пакет. Включение в Luna работает так же, как при установке из реестра. Для другой станции выберите соответствующий файл релиза; не переименовывайте чужой архив и не подменяйте model ID.
@@ -117,7 +117,7 @@ wget -q -O - --header='Content-Type: application/json' --post-data='{}' \
 Для совместимого старого YAM с командами `enable`, `ps` и `logs`:
 
 ```sh
-yam install ./dist/station-airplay-2.0.9.yap
+yam install ./dist/station-airplay-2.1.0.yap
 yam enable station-airplay
 yam ps
 yam logs station-airplay

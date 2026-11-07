@@ -29,7 +29,7 @@ import (
 )
 
 const (
-	version      = "Station airplay 2.0.9"
+	version      = "Station airplay 2.1.0"
 	audioFIFO    = "/tmp/sps.fifo"
 	metadataFIFO = "/tmp/shairport-sync-ap2-metadata"
 	brightness   = 170
@@ -205,6 +205,10 @@ type stationProfile struct {
 	// packagedDBus: the firmware has no dbus-daemon/dbus-send; run the
 	// packaged ARMhf build for the private bus.
 	packagedDBus bool
+	// volumeOnly: a packaged D-Bus profile may run native_volume alone. The
+	// original Mini has no qualified speech/button transport, but Luna owns its
+	// station volume, so the sender's slider can work without the full bridge.
+	volumeOnly bool
 }
 
 var (
@@ -236,7 +240,7 @@ var (
 		// a libsamplerate converter that only resolves on Quasar's library path
 		// (hw params fail with ENOENT). Station volume applies to AirPlay too.
 		// Firmware alsa-lib lives under quasar/libs. No D-Bus on the firmware.
-		{name: "Yandex Station Mini AirPlay", models: []string{"yandexmini", "YandexStationMini"}, pcm: "softvol", quasarCoexist: true, mdnsHostPrefix: "yandexmini", receiverABI: "armhf", airplayModel: "AudioAccessory5,1", alsaLib: "/system/vendor/quasar/libs/libasound.so.2", nvramHostID: true, packagedDBus: true},
+		{name: "Yandex Station Mini AirPlay", models: []string{"yandexmini", "YandexStationMini"}, pcm: "softvol", quasarCoexist: true, mdnsHostPrefix: "yandexmini", receiverABI: "armhf", airplayModel: "AudioAccessory5,1", alsaLib: "/system/vendor/quasar/libs/libasound.so.2", nvramHostID: true, packagedDBus: true, volumeOnly: true},
 	}
 	// hw is the detected profile; verifyYAM sets it before anything renders.
 	hw = plumProfile

@@ -86,9 +86,9 @@ func (v *lunaControlVolume) SetVolume(ctx context.Context, pct int) (float64, er
 	if err != nil {
 		return 0, err
 	}
-	// Luna applies the station's own step count (the emulator exposes 32 ALSA
-	// steps, so 47 becomes 50). Accept the hardware grid but still detect a
-	// write that never landed.
+	// Preserve the existing readback guard. A coarse hardware grid must be
+	// described and tested explicitly, not accepted by widening the tolerance
+	// for every station: that could hide an ignored write.
 	if diff := actual - float64(pct); diff > 5 || diff < -5 {
 		return 0, errors.New("Luna volume readback did not match")
 	}

@@ -151,15 +151,25 @@ func serveControls(ctx context.Context, bus string, api *yamAPI, d yamDevice, cf
 	}
 	c := &sharedController{cfg: cfg, receiver: r, station: station, ledCount: ledCount}
 	if cfg.NativePlayer {
-		c.native = newNativePlayer(quasarCLIPath)
+		if _, err := lunaServerRoot(api.base); err == nil {
+			native := newLunaNativePlayer(api)
+			c.native = native
+			defer native.Close()
+		} else {
+			c.native = newNativePlayer(quasarCLIPath)
+		}
 	}
 	buttonEvents := make(chan struct{}, 1)
 	if cfg.AliceButton {
-		event, e := findAliceButtonEvent("/dev/input")
-		if e != nil {
-			return e
+		if _, err := lunaServerRoot(api.base); err == nil {
+			go watchLunaAliceButton(ctx, api, &c.buttonSession, buttonEvents)
+		} else {
+			event, e := findAliceButtonEvent("/dev/input")
+			if e != nil {
+				return e
+			}
+			go watchAliceButton(ctx, filepath.Join("/dev/input", event), buttonEvents)
 		}
-		go watchAliceButton(ctx, filepath.Join("/dev/input", event), buttonEvents)
 	}
 	groupEvents := make(chan groupMessage, 8)
 	if cfg.Group != nil {
@@ -262,47 +272,38 @@ func runControlLoop(ctx context.Context, c *sharedController, api *yamAPI, cfg c
 	}
 }
 
-// controlsVolume picks the station volume owner. Without an explicit backend the
-// runtime API decides: a Luna invocation gets Luna's /api/volume, a legacy YAM
-// host keeps the station-volume package. An explicit volume_dependency always
-// means the package, so existing device configurations keep their behaviour.
+// controlsVolume keeps one station-volume owner per host. Luna invocations
+// always use Luna, including configurations left by the old package backend.
+// The package implementation remains available only for legacy YAM hosts.
 func controlsVolume(ctx context.Context, api *yamAPI, d yamDevice, cfg controlsConfig) (volumeControl, error) {
 	if !cfg.NativeVolume {
 		return nil, nil
 	}
 	backend := cfg.VolumeBackend
-	if backend == "" {
-		if cfg.VolumeDependency != "" {
-			backend = volumeBackendPackage
-		} else if api != nil {
-			if _, err := lunaServerRoot(api.base); err == nil {
-				backend = volumeBackendLuna
-			} else {
-				backend = volumeBackendPackage
-			}
-		} else {
-			backend = volumeBackendPackage
+	isLuna := false
+	if api != nil {
+		_, err := lunaServerRoot(api.base)
+		isLuna = err == nil
+	}
+	if isLuna {
+		if backend == volumeBackendPackage || cfg.VolumeDependency != "" {
+			fmt.Println("station volume: legacy package settings ignored on Luna; using Luna /api/volume")
 		}
+		backend = volumeBackendLuna
+	} else if backend == "" {
+		backend = volumeBackendPackage
 	}
 	switch backend {
 	case volumeBackendLuna:
-		// Luna owns the station volume. Since 0.2.17 it writes Quasar's logical
-		// level as well as ALSA, so the sender's slider, the station buttons,
-		// the ring and Alice share one state. A direct ALSA write leaves Quasar
-		// stale, and on Station 2 and Lite 2 the audible level follows Quasar,
-		// so the sender's slider would look dead even though amixer reported
-		// success. The mixer therefore stays a per-call fallback only.
+		// Luna is the only station-volume owner on this path. Its backend
+		// handles hardware differences; a failed HTTP request must not trigger
+		// a second, independent mixer write from the AirPlay plugin.
 		v, err := newLunaControlVolume(api)
 		if err != nil {
 			return nil, err
 		}
-		var fallback volumeControl
-		if alsa, aerr := newALSAControlVolume(nil); aerr == nil {
-			fallback = alsa
-		}
-		owner := &resilientVolume{luna: v, fallback: fallback}
-		fmt.Printf("station volume: the sender's slider sets the station volume via %s\n", owner.Backend())
-		return owner, nil
+		fmt.Printf("station volume: the sender's slider sets the station volume via %s\n", v.Backend())
+		return v, nil
 	case volumeBackendPackage:
 		var v volumeControl
 		var err error
@@ -325,12 +326,14 @@ func controlsVolume(ctx context.Context, api *yamAPI, d yamDevice, cfg controlsC
 }
 func controlsPreflight(ctx context.Context, api *yamAPI, d yamDevice, cfg *controlsConfig) error {
 	var caps struct {
-		Version  int  `json:"version"`
-		Speech   bool `json:"speech"`
-		LED      bool `json:"led"`
-		Commands bool `json:"commands"`
+		Version      int  `json:"version"`
+		Speech       bool `json:"speech"`
+		LED          bool `json:"led"`
+		Commands     bool `json:"commands"`
+		NativePlayer bool `json:"native_player"`
+		AliceButton  bool `json:"alice_button"`
 	}
-	if cfg.Voice || cfg.Ducking || cfg.LEDs {
+	if cfg.Voice || cfg.Ducking || cfg.LEDs || cfg.NativePlayer {
 		if err := api.requestContext(ctx, "GET", "/media", nil, &caps); err != nil {
 			return fmt.Errorf("speech-enabled YAM required: %w", err)
 		}
@@ -344,6 +347,11 @@ func controlsPreflight(ctx context.Context, api *yamAPI, d yamDevice, cfg *contr
 		if !cfg.Voice {
 			cfg.NativePlayer = false
 			fmt.Println("shared controls: native player disabled: voice is off")
+		} else if _, err := lunaServerRoot(api.base); err == nil {
+			if !caps.NativePlayer {
+				cfg.NativePlayer = false
+				fmt.Println("shared controls: native player disabled: Luna native-player capability unavailable")
+			}
 		} else if st, err := os.Stat(quasarCLIPath); err != nil || st.Mode()&0o111 == 0 {
 			cfg.NativePlayer = false
 			fmt.Println("shared controls: native player disabled: stock Quasar CLI not found")
@@ -353,6 +361,11 @@ func controlsPreflight(ctx context.Context, api *yamAPI, d yamDevice, cfg *contr
 		if !cfg.NativePlayer {
 			cfg.AliceButton = false
 			fmt.Println("shared controls: Alice button disabled: native player is off")
+		} else if _, err := lunaServerRoot(api.base); err == nil {
+			if !caps.AliceButton {
+				cfg.AliceButton = false
+				fmt.Println("shared controls: Alice button disabled: Luna input capability unavailable")
+			}
 		} else if !aliceButtonModels[d.Model] {
 			cfg.AliceButton = false
 			fmt.Printf("shared controls: Alice button disabled: not qualified for model %q\n", d.Model)
