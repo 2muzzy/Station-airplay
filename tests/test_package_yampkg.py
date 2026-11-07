@@ -56,6 +56,7 @@ assert by_target["yandexmini"]["config"] == {
     "native_player": False,
     "alice_button": False,
 }
+assert by_target["yandexmini"]["models_append"] == ["YandexStationMini"]
 
 full = {
     "voice": True,

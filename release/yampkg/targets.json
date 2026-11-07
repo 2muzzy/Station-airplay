@@ -141,6 +141,7 @@
       "sleep": [4],
       "dbus_export": false,
       "mango_guard": false,
+      "models_append": ["YandexStationMini"],
       "config": {
         "voice": false,
         "native_volume": true,
