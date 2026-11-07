@@ -117,6 +117,13 @@ for target in matrix["targets"]:
         finally:
             pathlib.Path(path).unlink()
 
+# The clean-install enable hook must survive a missing Luna settings file.
+postinstall = ROOT / "release/yampkg/airplay-postinstall.sh"
+assert postinstall.is_file()
+assert 'cat "$settings" 2>/dev/null || true' in postinstall.read_text()
+if shutil.which("sh"):
+    subprocess.run(["sh", "-n", str(postinstall)], check=True)
+
 # `plum` must not steal `yandexplum.yampkg`; prefixed base names still work.
 with tempfile.TemporaryDirectory(prefix="yampkg-base-") as directory:
     root = pathlib.Path(directory)
