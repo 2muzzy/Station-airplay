@@ -21,6 +21,7 @@ matrix = module.load_matrix(MATRIX)
 module.validate_matrix(matrix)
 template = TEMPLATE.read_text()
 module.check(matrix, template)
+assert module.LUNA_DEPENDENCY == "yam/luna >=0.2.25"
 by_target = {target["target"]: target for target in matrix["targets"]}
 
 assert set(by_target) == {
