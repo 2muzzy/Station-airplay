@@ -1,11 +1,20 @@
-## Unreleased
+## 2.1.3
 
-- Enable shared controls for Mini 3 (`bergamot`): voice transport, native
-  volume, speech ducking, LED indication, native player and Alice-button
-  pause/resume. Reliable bidirectional volume on the tested firmware requires
-  the corresponding Luna native-volume qualification; Mini 3 Pro stays
-  audio-only. See `docs/validation/MINI3_20261107.md` for hardware validation
-  and limits.
+- Retain the 10% sender-to-station volume write grid and exponent-0.8
+  loudness curve, with inverse feedback and native 5% observations.
+  This already shipped in 2.1.0; 2.1.3 adds explicit release-contract
+  regression coverage, not a second volume implementation. See
+  `docs/validation/VOLUME_STEP_213.md` for scope and examples.
+- Enable shared controls for Mini 3 (`bergamot`, `yandexmini3`): voice
+  transport, native volume, speech ducking, LED indication, native player and
+  Alice-button pause/resume. Mini 3 Pro (`pickle`) stays audio-only.
+- Require `yam/luna >=0.2.25`. Luna 0.2.25 selects the native Quasar volume
+  backend by the exact `yandex,bergamot` device-tree entry, not by the firmware
+  build string. A build that does not acknowledge the write still falls back
+  to ALSA; only the tested firmware was qualified on hardware.
+- No changes to audio, the 10% volume curve or the disabled custom LED
+  indication. See `docs/validation/MINI3_20261107.md` for validation and
+  limits.
 
 ## 2.1.2
 

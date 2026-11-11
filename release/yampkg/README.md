@@ -15,7 +15,7 @@ launcher, а `scripts/package_yampkg.py` пересобирает пакеты �
 - `launch-airplay.sh.in` — общий launcher. Плейсхолдеры подставляет сборщик.
 - `requirements.txt` — PyYAML для чтения и записи `MANIFEST.yaml`.
 
-## Матрица 2.1.0 → 2.1.1
+## Матрица 2.1.2 → 2.1.3
 
 | Цель | Управление | Что меняется |
 |---|---|---|
@@ -25,8 +25,8 @@ launcher, а `scripts/package_yampkg.py` пересобирает пакеты �
 | `yandexmicro` | голос, ducking, громкость, индикация; native player при наличии Quasar CLI | без изменений |
 | `mango` | голос, ducking, индикация | без изменений |
 | `orion` | только звук | без изменений |
-| `bergamot` (Мини 3) | полный набор | включён controls-config; нативная громкость требует исправления Luna для проверенной прошивки |
-| `pickle` (Мини 3 Про) | только звук | новая цель: база `bergamot`, AArch64-приёмник и `libplist`, model ID `yandexmini_3_pro` |
+| `bergamot` (Мини 3) | полный набор | включён controls-config; native volume через Luna >=0.2.25 для всех сборок на точной плате |
+| `pickle` (Мини 3 Про) | только звук | без изменений; база `bergamot`, AArch64-приёмник и `libplist`, model ID `yandexmini_3_pro` |
 
 `led_level` остаётся 200 у всех целей. Для аудио-профилей JSON всё равно
 создаётся launcher'ом при первом запуске, но не передаётся супервизору.
@@ -38,9 +38,9 @@ python3 -m pip install -r release/yampkg/requirements.txt
 python3 scripts/package_yampkg.py --check
 
 python3 scripts/package_yampkg.py \
-  --base /path/to/published/2.1.0 \
-  --binary /path/to/station-airplay-2.1.0.upx \
-  --version 2.1.1 \
+  --base /path/to/published/2.1.2 \
+  --binary /path/to/station-airplay-2.1.2.upx \
+  --version 2.1.3 \
   --out dist/yampkg
 ```
 
@@ -63,7 +63,7 @@ ARMv7-супервизор; сборщик проверяет ELF32/EM_ARM. `--v
 - `config/airplay-controls-v2.json` — из матрицы.
 - `plugin.toml` — версия, список совместимых model ID и, для баз 2.0.9,
   узкие права `media.native` / `input.alice`.
-- `MANIFEST.yaml` — target, версия, `depends: yam/luna >=0.2.24` и все
+- `MANIFEST.yaml` — target, версия, `depends: yam/luna >=0.2.25` и все
   `files_sha256`, включая добавленные AArch64-файлы.
 
 Сборщик проверяет хеши базового пакета до правок и хеши результата после

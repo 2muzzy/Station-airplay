@@ -38,7 +38,7 @@ NEW_PERMISSIONS = (
     '"media.native", "input.alice"]'
 )
 OLD_PERMISSIONS = 'permissions = ["exec", "clock", "led", "ipc.speech", "commands"]'
-LUNA_DEPENDENCY = "yam/luna >=0.2.24"
+LUNA_DEPENDENCY = "yam/luna >=0.2.25"
 
 
 def sha256_bytes(data):
