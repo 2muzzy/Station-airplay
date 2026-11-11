@@ -173,3 +173,11 @@ Makefile в репозитории нет. [Полная инструкция](s
 Go-супервизор распространяется по GPL-3.0-or-later. Shairport Sync, NQPTP, Avahi и библиотеки имеют собственные лицензии: [NOTICE.md](docs/NOTICE.md), [происхождение компонентов](docs/THIRD_PARTY.md), [LICENSES/](LICENSES/). Источники и ограничения воспроизводимости перечислены в [third_party/README.md](third_party/README.md).
 
 Проект не связан с Apple и Яндексом. Перед изменениями на станции сохраните рабочую конфигурацию и предыдущий пакет для отката.
+
+## Volume step retained in 2.1.3
+
+Shared station-volume controls keep the **10 percentage-point sender write
+grid** and **0.8 loudness curve** already released in 2.1.0. Native volume
+observations keep their 5% grid; hardware and voice steps are not changed.
+See [scope, examples and regression tests](docs/validation/VOLUME_STEP_213.md).
+Artwork colour and spectrum work remain separate from this release.

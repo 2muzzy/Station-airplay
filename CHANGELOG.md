@@ -1,5 +1,10 @@
 ## 2.1.3
 
+- Retain the 10% sender-to-station volume write grid and exponent-0.8
+  loudness curve, with inverse feedback and native 5% observations.
+  This already shipped in 2.1.0; 2.1.3 adds explicit release-contract
+  regression coverage, not a second volume implementation. See
+  `docs/validation/VOLUME_STEP_213.md` for scope and examples.
 - Enable shared controls for Mini 3 (`bergamot`, `yandexmini3`): voice
   transport, native volume, speech ducking, LED indication, native player and
   Alice-button pause/resume. Mini 3 Pro (`pickle`) stays audio-only.
